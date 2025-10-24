@@ -1,0 +1,16 @@
+{
+  "title": "Pharma Intelligence Scraper Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "pharmacy": {
+      "title": "Which pharmacy to scrape",
+      "type": "string",
+      "description": "Select which pharmacy website to scrape",
+      "default": "all",
+      "enum": ["all", "farma_oliva", "punto_farma", "farmacia_center", "farmacia_catedral"],
+      "enumTitles": ["All Pharmacies", "Farma Oliva", "Punto Farma", "Farmacia Center", "Farmacia Catedral"]
+    }
+  },
+  "required": ["pharmacy"]
+}

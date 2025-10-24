@@ -1,0 +1,45 @@
+{
+  "actorSpecification": 1,
+  "name": "pharma-intelligence-scrapers",
+  "title": "Pharma Intelligence - Paraguay Pharmacy Scrapers",
+  "description": "Scrapes 4 Paraguayan pharmacy websites (Farma Oliva, Punto Farma, Farmacia Center, Farmacia Catedral) for competitive pricing intelligence",
+  "version": "1.0.0",
+  "meta": {
+    "templateId": "python-crawlee-playwright"
+  },
+  "input": "./input_schema.json",
+  "dockerfile": "./Dockerfile",
+  "readme": "./README.md",
+  "environmentVariables": {
+    "SUPABASE_URL": {
+      "description": "Supabase project URL",
+      "type": "string",
+      "isSecret": false
+    },
+    "SUPABASE_KEY": {
+      "description": "Supabase anon/service key",
+      "type": "string",
+      "isSecret": true
+    },
+    "MAX_REQUESTS_PER_CRAWL": {
+      "description": "Maximum number of requests per crawl",
+      "type": "string",
+      "default": "100000"
+    },
+    "REQUEST_DELAY_MS": {
+      "description": "Delay between requests in milliseconds",
+      "type": "string",
+      "default": "1000"
+    },
+    "MAX_CONCURRENCY": {
+      "description": "Maximum concurrent requests",
+      "type": "string",
+      "default": "5"
+    },
+    "LOG_LEVEL": {
+      "description": "Logging level (DEBUG, INFO, WARNING, ERROR)",
+      "type": "string",
+      "default": "INFO"
+    }
+  }
+}
