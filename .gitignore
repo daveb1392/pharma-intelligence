@@ -37,8 +37,10 @@ ENV/
 *.swo
 *~
 
-# Crawlee storage
-storage/
+# Crawlee storage (ignore data, keep Python module)
+storage/datasets/
+storage/key_value_stores/
+storage/request_queues/
 
 # Testing
 .pytest_cache/
