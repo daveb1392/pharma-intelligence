@@ -4,14 +4,14 @@ FROM apify/actor-python-playwright:3.11
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy requirements and install dependencies
+# Copy requirements and install dependencies (from repo root due to dockerContextDir)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code from repo root (using dockerContextDir: "../../")
-COPY ../../scrapers ./scrapers
-COPY ../../storage ./storage
-COPY ../../utils ./utils
+# Copy source code from repo root
+COPY scrapers ./scrapers
+COPY storage ./storage
+COPY utils ./utils
 
 # Set the entrypoint to run Farma Oliva scraper
 CMD ["python", "-m", "scrapers.farma_oliva"]
