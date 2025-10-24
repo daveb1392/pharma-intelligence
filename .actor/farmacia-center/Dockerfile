@@ -8,10 +8,10 @@ WORKDIR /usr/src/app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code (scrapers, storage, utils)
-COPY scrapers ./scrapers
-COPY storage ./storage
-COPY utils ./utils
+# Copy source code from repo root (using dockerContextDir: "../../")
+COPY ../../scrapers ./scrapers
+COPY ../../storage ./storage
+COPY ../../utils ./utils
 
 # Set the entrypoint to run Farmacia Center scraper
 CMD ["python", "-m", "scrapers.farmacia_center"]
