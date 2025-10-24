@@ -57,6 +57,7 @@ class SupabaseLoader:
     async def upsert_product(self, product_data: Dict[str, Any]) -> Optional[str]:
         """
         Insert or update a product in Supabase.
+        A trigger will automatically track price changes to price_history table.
 
         Args:
             product_data: Dictionary with product information
