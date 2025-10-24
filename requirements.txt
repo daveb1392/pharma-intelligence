@@ -1,10 +1,7 @@
-# Apify Actor SDK (latest version, compatible with Crawlee 1.x)
-apify>=3.0.0
-
 # Supabase database client
 supabase>=2.0.0
 
-# Web scraping framework with all features
+# Web scraping framework with all features (Apify SDK is pre-installed on Apify platform)
 crawlee[all]>=1.0.0
 
 # Headless browser automation
