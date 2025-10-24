@@ -1,3 +1,6 @@
+# Apify Actor SDK
+apify>=2.0.0
+
 # Supabase database client
 supabase>=2.0.0
 

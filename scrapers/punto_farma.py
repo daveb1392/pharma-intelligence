@@ -137,6 +137,35 @@ class PuntoFarmaProduct:
             if desc_elem:
                 product_description = desc_elem.get_text(strip=True)
 
+            # Bank discount (Itaú QR Débito)
+            bank_discount_price = None
+            bank_discount_bank_name = None
+            bank_payment_offers = None
+
+            # Look for bank discount section: <h6>Con Itau QR Debito</h6> and price
+            bank_section = soup.find("h6", string=re.compile(r"Con\s+Itau", re.IGNORECASE))
+            if bank_section:
+                # Extract bank name from heading: "Con Itau QR Debito"
+                bank_text = bank_section.get_text(strip=True)
+                bank_match = re.search(r"Con\s+(.+?)(?:\s+\*|$)", bank_text, re.IGNORECASE)
+                if bank_match:
+                    bank_discount_bank_name = bank_match.group(1).strip()
+
+                # Find the price in the same container
+                container = bank_section.find_parent("div", class_="d-flex")
+                if container:
+                    price_span = container.find("span", class_="fs-5")
+                    if price_span:
+                        price_text = price_span.get_text(strip=True)
+                        # Extract price: "Gs. 8.640"
+                        price_match = re.search(r"Gs\.\s*([\d.,]+)", price_text)
+                        if price_match:
+                            bank_discount_price = float(price_match.group(1).replace(".", "").replace(",", ""))
+
+                # Build bank payment offers description
+                if bank_discount_bank_name:
+                    bank_payment_offers = f"Descuento exclusivo con {bank_discount_bank_name}"
+
             # Build product dictionary
             product_data = {
                 "site_code": site_code,
@@ -151,9 +180,9 @@ class PuntoFarmaProduct:
                 "original_price": original_price,
                 "discount_percentage": discount_percentage,
                 "discount_amount": discount_amount,
-                "bank_discount_price": None,
-                "bank_discount_bank_name": None,
-                "bank_payment_offers": None,
+                "bank_discount_price": bank_discount_price,
+                "bank_discount_bank_name": bank_discount_bank_name,
+                "bank_payment_offers": bank_payment_offers,
                 "requires_prescription": False,  # Not shown on page
                 "prescription_type": None,
                 "payment_methods": None,

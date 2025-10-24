@@ -118,6 +118,8 @@ class FarmaciaCatedralProduct:
             desc_tab = soup.select_one("#home-tab-pane")
             if desc_tab:
                 full_description = desc_tab.get_text(strip=True)
+                # Remove "Descripción del producto" heading (case insensitive)
+                full_description = re.sub(r"^Descripción del producto\s*", "", full_description, flags=re.IGNORECASE)
 
             # Short description from tab: <div id="profile-tab-pane">
             short_description = None
@@ -125,7 +127,7 @@ class FarmaciaCatedralProduct:
             if short_desc_tab:
                 short_description = short_desc_tab.get_text(strip=True)
                 # Remove "Resumen del producto" heading
-                short_description = re.sub(r"^Resumen del producto\s*", "", short_description)
+                short_description = re.sub(r"^Resumen del producto\s*", "", short_description, flags=re.IGNORECASE)
 
             # Prefer full description, fallback to short, then JSON-LD
             if full_description:

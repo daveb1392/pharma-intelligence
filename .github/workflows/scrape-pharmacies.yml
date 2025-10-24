@@ -1,0 +1,151 @@
+name: Scrape Pharmacies
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      pharmacy:
+        description: 'Which pharmacy to scrape (all, farma_oliva, punto_farma, farmacia_center, farmacia_catedral)'
+        required: true
+        default: 'all'
+
+  # Scheduled run: Every Monday at 2 AM UTC (adjust timezone as needed)
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM UTC
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+  MAX_REQUESTS_PER_CRAWL: 100000
+  REQUEST_DELAY_MS: 1000
+  MAX_CONCURRENCY: 3
+  LOG_LEVEL: INFO
+
+jobs:
+  scrape-farma-oliva:
+    if: github.event.inputs.pharmacy == 'farma_oliva' || github.event.inputs.pharmacy == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Farma Oliva scraper
+        run: python -m scrapers.farma_oliva
+        continue-on-error: true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farma-oliva-logs
+          path: logs/
+          retention-days: 7
+
+  scrape-punto-farma:
+    if: github.event.inputs.pharmacy == 'punto_farma' || github.event.inputs.pharmacy == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # 4 hours max
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Punto Farma scraper
+        run: python -m scrapers.punto_farma
+        continue-on-error: true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: punto-farma-logs
+          path: logs/
+          retention-days: 7
+
+  scrape-farmacia-center:
+    if: github.event.inputs.pharmacy == 'farmacia_center' || github.event.inputs.pharmacy == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Farmacia Center scraper
+        run: python -m scrapers.farmacia_center
+        continue-on-error: true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farmacia-center-logs
+          path: logs/
+          retention-days: 7
+
+  scrape-farmacia-catedral:
+    if: github.event.inputs.pharmacy == 'farmacia_catedral' || github.event.inputs.pharmacy == 'all' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours max
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Farmacia Catedral scraper
+        run: python -m scrapers.farmacia_catedral
+        continue-on-error: true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farmacia-catedral-logs
+          path: logs/
+          retention-days: 7
