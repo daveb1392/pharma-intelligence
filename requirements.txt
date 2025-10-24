@@ -1,8 +1,9 @@
 # Supabase database client
 supabase>=2.0.0
 
-# Web scraping framework with all features (Apify SDK is pre-installed on Apify platform)
-crawlee[all]>=1.0.0
+# Web scraping framework (Apify SDK is pre-installed on Apify platform)
+# Note: Using specific extras instead of [all] to avoid opentelemetry-distro conflicts
+crawlee[playwright,beautifulsoup,httpx]>=1.0.0
 
 # Headless browser automation
 playwright>=1.40.0
