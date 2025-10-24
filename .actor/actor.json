@@ -11,35 +11,11 @@
   "dockerfile": "./Dockerfile",
   "readme": "./README.md",
   "environmentVariables": {
-    "SUPABASE_URL": {
-      "description": "Supabase project URL",
-      "type": "string",
-      "isSecret": false
-    },
-    "SUPABASE_KEY": {
-      "description": "Supabase anon/service key",
-      "type": "string",
-      "isSecret": true
-    },
-    "MAX_REQUESTS_PER_CRAWL": {
-      "description": "Maximum number of requests per crawl",
-      "type": "string",
-      "default": "100000"
-    },
-    "REQUEST_DELAY_MS": {
-      "description": "Delay between requests in milliseconds",
-      "type": "string",
-      "default": "1000"
-    },
-    "MAX_CONCURRENCY": {
-      "description": "Maximum concurrent requests",
-      "type": "string",
-      "default": "5"
-    },
-    "LOG_LEVEL": {
-      "description": "Logging level (DEBUG, INFO, WARNING, ERROR)",
-      "type": "string",
-      "default": "INFO"
-    }
+    "SUPABASE_URL": "",
+    "SUPABASE_KEY": "@SUPABASE_KEY",
+    "MAX_REQUESTS_PER_CRAWL": "100000",
+    "REQUEST_DELAY_MS": "1000",
+    "MAX_CONCURRENCY": "5",
+    "LOG_LEVEL": "INFO"
   }
 }
