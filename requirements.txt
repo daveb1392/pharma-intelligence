@@ -1,5 +1,5 @@
-# Apify Actor SDK
-apify>=2.0.0
+# Apify Actor SDK (latest version, compatible with Crawlee 1.x)
+apify>=3.0.0
 
 # Supabase database client
 supabase>=2.0.0
