@@ -252,30 +252,37 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
 
         # Phase 1: Click all "Cargar más" buttons (fast, no extraction)
         logger.info("Phase 1: Clicking all 'Cargar más' buttons to load products...")
-        while True:
-            # Wait for any pending AJAX requests to complete
-            await context.page.wait_for_load_state("networkidle", timeout=5000)
+        max_clicks = 1000  # Safety limit (should be ~520 for all pages, but adding buffer)
 
-            # Check if "Cargar más" button exists
-            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
-            button_count = await load_more_button.count()
+        while page_count < max_clicks:
+            try:
+                # Check if "Cargar más" button exists and is visible
+                load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
 
-            logger.debug(f"Button check: count={button_count}, page_count={page_count}")
+                # Wait for button to be visible (with timeout)
+                try:
+                    await load_more_button.wait_for(state="visible", timeout=3000)
+                except:
+                    logger.info(f"Phase 1 complete: 'Cargar más' button no longer visible after {page_count} clicks")
+                    break
 
-            if button_count > 0:
-                page_count += 1
                 # Scroll to button and click
                 await load_more_button.scroll_into_view_if_needed()
                 await load_more_button.click()
+                page_count += 1
 
                 if page_count % 20 == 0:
                     logger.info(f"Clicked 'Cargar más' {page_count} times...")
 
-                # Wait for new products to load (increased from 300ms to 1000ms)
-                await context.page.wait_for_timeout(1000)
-            else:
-                logger.info(f"Phase 1 complete: Clicked 'Cargar más' {page_count} times, all products loaded")
+                # Wait for new products to load - check for new product links appearing
+                await context.page.wait_for_timeout(800)
+
+            except Exception as e:
+                logger.info(f"Phase 1 complete: Button clicking stopped after {page_count} clicks ({e})")
                 break
+
+        if page_count >= max_clicks:
+            logger.warning(f"Reached max clicks limit ({max_clicks}), stopping")
 
         # Phase 2: Extract and enqueue ALL product links at once
         logger.info("Phase 2: Extracting all product links...")
