@@ -1,0 +1,16 @@
+{
+  "title": "Punto Farma Scraper Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "phase": {
+      "title": "Scraping Phase",
+      "type": "string",
+      "description": "Phase 1: Collect URLs | Phase 2: Scrape Products",
+      "enum": ["phase1", "phase2"],
+      "default": "phase1",
+      "editor": "select"
+    }
+  },
+  "required": []
+}
