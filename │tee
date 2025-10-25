@@ -1,0 +1,29 @@
+[32m2025-10-25 00:06:47[0m | [1mINFO    [0m | [36mutils.logger[0m:[36msetup_logger[0m:[36m32[0m - [1mLogger initialized with level: INFO[0m
+[32m2025-10-25 00:06:47[0m | [1mINFO    [0m | [36mstorage.supabase_loader[0m:[36m__init__[0m:[36m22[0m - [1mSupabase client initialized[0m
+[32m2025-10-25 00:06:47[0m | [1mINFO    [0m | [36m__main__[0m:[36mmain[0m:[36m318[0m - [1mNo proxies configured - using direct connection[0m
+[32m2025-10-25 00:06:48[0m | [1mINFO    [0m | [36mstorage.supabase_loader[0m:[36mstart_scraping_run[0m:[36m49[0m - [1mStarted scraping run 18c511cb-a662-4bf8-917b-344dfa0091a6 for punto_farma[0m
+[32m2025-10-25 00:06:48[0m | [31m[1mERROR   [0m | [36m__main__[0m:[36mmain[0m:[36m358[0m - [31m[1mScraping failed: '>' not supported between instances of 'datetime.timedelta' and 'int'[0m
+[32m2025-10-25 00:06:48[0m | [1mINFO    [0m | [36mstorage.supabase_loader[0m:[36mcomplete_scraping_run[0m:[36m130[0m - [1mCompleted scraping run 18c511cb-a662-4bf8-917b-344dfa0091a6: 0 scraped, 0 failed[0m
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/davidbadovinac/projects/pharma-intelligence/scrapers/punto_farma.py", line 364, in <module>
+    asyncio.run(main())
+  File "/Users/davidbadovinac/.pyenv/versions/3.11.7/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/davidbadovinac/.pyenv/versions/3.11.7/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbadovinac/.pyenv/versions/3.11.7/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/davidbadovinac/projects/pharma-intelligence/scrapers/punto_farma.py", line 325, in main
+    crawler = PlaywrightCrawler(
+              ^^^^^^^^^^^^^^^^^^
+  File "/Users/davidbadovinac/projects/pharma-intelligence/venv/lib/python3.11/site-packages/crawlee/crawlers/_playwright/_playwright_crawler.py", line 202, in __init__
+    super().__init__(**kwargs)
+  File "/Users/davidbadovinac/projects/pharma-intelligence/venv/lib/python3.11/site-packages/crawlee/crawlers/_basic/_basic_crawler.py", line 418, in __init__
+    else max(2 * request_handler_timeout, timedelta(minutes=5))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'

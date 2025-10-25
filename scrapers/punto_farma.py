@@ -253,9 +253,14 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
         # Phase 1: Click all "Cargar más" buttons (fast, no extraction)
         logger.info("Phase 1: Clicking all 'Cargar más' buttons to load products...")
         while True:
+            # Wait for any pending AJAX requests to complete
+            await context.page.wait_for_load_state("networkidle", timeout=5000)
+
             # Check if "Cargar más" button exists
             load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
             button_count = await load_more_button.count()
+
+            logger.debug(f"Button check: count={button_count}, page_count={page_count}")
 
             if button_count > 0:
                 page_count += 1
@@ -266,8 +271,8 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
                 if page_count % 20 == 0:
                     logger.info(f"Clicked 'Cargar más' {page_count} times...")
 
-                # Brief wait for new products to load
-                await context.page.wait_for_timeout(300)
+                # Wait for new products to load (increased from 300ms to 1000ms)
+                await context.page.wait_for_timeout(1000)
             else:
                 logger.info(f"Phase 1 complete: Clicked 'Cargar más' {page_count} times, all products loaded")
                 break
