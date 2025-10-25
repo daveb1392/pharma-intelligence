@@ -201,14 +201,17 @@ python -m scrapers.farma_oliva
 ### 2. Punto Farma Scraper (COMPLETED)
 **File**: `scrapers/punto_farma.py`
 
-**Navigation Strategy**: Infinite scroll with "Cargar más" button
+**Navigation Strategy**: BATCHED infinite scroll with "Cargar más" button
 
 **Features Implemented:**
-- ✅ PlaywrightCrawler with infinite scroll handling
-- ✅ "Cargar más" button clicking to load all products
+- ✅ PlaywrightCrawler with batched pagination (avoids 60s timeout + memory issues)
+- ✅ Each batch: Click 20× → Extract products → Re-enqueue next batch
+- ✅ Unique URL per batch (`?batch=N`) to avoid Crawlee deduplication
+- ✅ "Cargar más" button clicking with retry logic for slow AJAX
 - ✅ Product detail extraction from HTML
 - ✅ Brand extraction from `<a class="category" href="/marca/...">`
 - ✅ Product description from `<div class="atributos_body__wyXR6 accordion-body">`
+- ✅ Bank discount extraction (Itaú QR Débito special pricing)
 - ✅ Discount detection (original_price, discount_percentage, discount_amount)
 - ✅ Real-time Supabase saving
 - ✅ Breadcrumb category extraction
@@ -224,7 +227,15 @@ python -m scrapers.farma_oliva
 - Current price: `.precio-con-descuento span.precio-lg`
 - Original price: `.precio-regular del.precio-sin-descuento`
 - Discount: `.precio-regular div[style*='background-color']`
+- Bank discount: `h6:has-text('Con Itau')` + price in same container
 - "Cargar más" button: `button.btn.btn-primary:has-text('Cargar más')`
+
+**Batching Strategy:**
+- **Batch size**: 20 clicks per batch (~240 products)
+- **Total batches**: ~26 batches (520 pages ÷ 20)
+- **Each batch**: Completes in ~30 seconds (well under 60s timeout)
+- **URL uniqueness**: Appends `?batch=N` to avoid Crawlee deduplication
+- **Continuation**: Batch N re-enqueues category URL as batch N+1 with updated `clicks_done` tracking
 
 **Test Command:**
 ```bash
@@ -232,6 +243,12 @@ python -m scrapers.punto_farma
 ```
 
 **Expected Products**: ~6,240 (Medicamentos: 440 pages × 12 = 5,280 + Nutrición: 80 pages × 12 = 960)
+
+**How Batching Works:**
+1. **Batch 1**: Load page → Click 20× → Extract 240 products → Enqueue `?batch=2`
+2. **Batch 2**: Fresh page load → Click 20× more → Extract next 240 → Enqueue `?batch=3`
+3. **Continue**: Until button disappears or 600 clicks reached
+4. **Benefits**: No memory accumulation, no timeout, tracks progress via batch number
 
 ---
 

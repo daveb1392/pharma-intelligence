@@ -311,12 +311,14 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
         # Check if we should continue (button still exists and haven't hit limit)
         if no_button_count < 2 and total_clicks_now < max_total_clicks:
             # Re-enqueue THIS SAME URL with updated batch info
+            # Add batch number to URL to avoid Crawlee deduplication
             next_batch = batch_num + 1
+            next_url = f"{url}{'&' if '?' in url else '?'}batch={next_batch}"
             logger.info(f"Enqueueing batch {next_batch} to continue pagination")
 
             await context.add_requests([
                 Request.from_url(
-                    url,
+                    next_url,
                     label="category_listing",
                     user_data={
                         "batch": next_batch,
