@@ -359,8 +359,19 @@ async def main() -> None:
     else:
         logger.info("No proxies configured - using direct connection")
 
-    # Check command line argument for phase
-    phase = sys.argv[1] if len(sys.argv) > 1 else "phase1"
+    # Check command line argument or Apify input for phase
+    # Priority: 1) Command line arg, 2) Apify input, 3) Default to phase1
+    phase = None
+    if len(sys.argv) > 1:
+        phase = sys.argv[1]
+    else:
+        # Try to get from Apify Actor.get_input() (for Apify deployment)
+        try:
+            from crawlee import Actor
+            actor_input = await Actor.get_input() or {}
+            phase = actor_input.get("phase", "phase1")
+        except:
+            phase = "phase1"
 
     if phase == "phase1":
         # ============================================================
