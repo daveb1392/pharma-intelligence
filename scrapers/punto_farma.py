@@ -241,108 +241,94 @@ async def handle_product_page(context: PlaywrightCrawlingContext) -> None:
 
 @router.handler("category_listing")
 async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
-    """Handle category listing pages with BATCHED infinite scroll (Cargar más button)."""
-    logger.info(f"Processing category listing: {context.request.url}")
+    """Handle ONE batch of category listing, then re-enqueue for next batch."""
+    url = context.request.url
+
+    # Get batch tracking from user_data
+    batch_num = context.request.user_data.get("batch", 1)
+    clicks_done = context.request.user_data.get("clicks_done", 0)
+
+    logger.info(f"Processing batch {batch_num} (after {clicks_done} previous clicks): {url}")
 
     try:
-        # Wait for product grid to load
+        # Wait for product grid
         await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
 
         base_url = PHARMACY_URLS["punto_farma"]["base_url"]
-        total_enqueued = 0
-        batch_size = 40  # Load 40 pages (480 products) per batch
-        total_clicks = 0
-        max_total_clicks = 600  # Safety limit
+        batch_size = 20  # Click 20 times per batch (small enough to finish in 30-40 seconds)
+        max_total_clicks = 600
 
-        logger.info(f"Starting batched scraping: {batch_size} pages per batch")
+        # Click "Cargar más" batch_size times
+        clicks_this_batch = 0
+        no_button_count = 0
 
-        while total_clicks < max_total_clicks:
-            # BATCH PHASE 1: Click "Cargar más" N times to load batch
-            clicks_this_batch = 0
-            no_button_count = 0
+        while clicks_this_batch < batch_size and (clicks_done + clicks_this_batch) < max_total_clicks:
+            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
 
-            logger.info(f"Batch {total_clicks // batch_size + 1}: Loading {batch_size} pages...")
-
-            while clicks_this_batch < batch_size and total_clicks < max_total_clicks:
-                # Check if "Cargar más" button exists
-                load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
+            try:
                 button_visible = await load_more_button.is_visible()
+            except:
+                # Page closed or button disappeared
+                no_button_count += 1
+                if no_button_count >= 2:
+                    logger.info(f"Button check failed {no_button_count} times, assuming no more pages")
+                    break
+                await context.page.wait_for_timeout(1000)
+                continue
 
-                if button_visible:
-                    no_button_count = 0
-                    await load_more_button.scroll_into_view_if_needed()
-                    await load_more_button.click()
-                    clicks_this_batch += 1
-                    total_clicks += 1
+            if button_visible:
+                no_button_count = 0
+                await load_more_button.scroll_into_view_if_needed()
+                await load_more_button.click()
+                clicks_this_batch += 1
+                await context.page.wait_for_timeout(200)  # Fast clicking
+            else:
+                no_button_count += 1
+                if no_button_count >= 2:
+                    logger.info(f"No more 'Cargar más' button after {clicks_done + clicks_this_batch} total clicks")
+                    break
+                await context.page.wait_for_timeout(1000)
 
-                    if total_clicks % 20 == 0:
-                        logger.info(f"Total clicks: {total_clicks}")
+        total_clicks_now = clicks_done + clicks_this_batch
+        logger.info(f"Batch {batch_num}: Clicked {clicks_this_batch} times (total: {total_clicks_now})")
 
-                    await context.page.wait_for_timeout(300)
-                else:
-                    # No more button - we've reached the end
-                    no_button_count += 1
-                    if no_button_count >= 3:
-                        logger.info(f"No more 'Cargar más' button after {total_clicks} total clicks")
-                        break
-                    await context.page.wait_for_timeout(1000)
+        # Extract and enqueue products
+        product_links = await context.page.locator("a[href*='/producto/']").all()
+        logger.info(f"Found {len(product_links)} product links on page")
 
-            # Check if we're done (no more button)
-            if no_button_count >= 3:
-                logger.info(f"Finished all pages after {total_clicks} clicks")
-                # Extract and enqueue remaining products
-                product_links = await context.page.locator("a[href*='/producto/']").all()
-                logger.info(f"Final batch: Found {len(product_links)} product links")
+        enqueued = set()
+        for link in product_links:
+            href = await link.get_attribute("href")
+            if href:
+                if not href.startswith("http"):
+                    href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+                if href not in enqueued:
+                    await context.add_requests([Request.from_url(href, label="default")])
+                    enqueued.add(href)
 
-                enqueued_urls = set()
-                for link in product_links:
-                    href = await link.get_attribute("href")
-                    if href:
-                        if not href.startswith("http"):
-                            href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
-                        if href not in enqueued_urls:
-                            await context.add_requests([Request.from_url(href, label="default")])
-                            enqueued_urls.add(href)
+        logger.info(f"Batch {batch_num}: Enqueued {len(enqueued)} products")
 
-                total_enqueued += len(enqueued_urls)
-                logger.info(f"Final batch: Enqueued {len(enqueued_urls)} products | Total: {total_enqueued}")
-                break
+        # Check if we should continue (button still exists and haven't hit limit)
+        if no_button_count < 2 and total_clicks_now < max_total_clicks:
+            # Re-enqueue THIS SAME URL with updated batch info
+            next_batch = batch_num + 1
+            logger.info(f"Enqueueing batch {next_batch} to continue pagination")
 
-            # BATCH PHASE 2: Extract and enqueue products from this batch
-            product_links = await context.page.locator("a[href*='/producto/']").all()
-            logger.info(f"Batch loaded: Found {len(product_links)} product links")
-
-            enqueued_urls = set()
-            for link in product_links:
-                href = await link.get_attribute("href")
-                if href:
-                    if not href.startswith("http"):
-                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
-                    if href not in enqueued_urls:
-                        await context.add_requests([Request.from_url(href, label="default")])
-                        enqueued_urls.add(href)
-
-            batch_enqueued = len(enqueued_urls)
-            total_enqueued += batch_enqueued
-            logger.info(f"Batch complete: Enqueued {batch_enqueued} products | Total: {total_enqueued}")
-
-            # Clear the DOM to free memory (remove already-enqueued product cards)
-            # This prevents memory bloat from accumulating thousands of DOM elements
-            await context.page.evaluate("""
-                () => {
-                    const productLinks = document.querySelectorAll("a[href*='/producto/']");
-                    productLinks.forEach(link => {
-                        const card = link.closest('.card, .product-card, [class*="product"]');
-                        if (card) card.remove();
-                    });
-                }
-            """)
-            logger.info(f"Cleared {len(product_links)} product cards from DOM to free memory")
-
-        logger.info(f"Category complete: Total {total_enqueued} products enqueued from {total_clicks} page loads")
+            await context.add_requests([
+                Request.from_url(
+                    url,
+                    label="category_listing",
+                    user_data={
+                        "batch": next_batch,
+                        "clicks_done": total_clicks_now
+                    }
+                )
+            ])
+        else:
+            logger.info(f"Category complete: {total_clicks_now} total pages loaded, {len(enqueued)} products from final batch")
 
     except Exception as e:
-        logger.error(f"Error processing category listing {context.request.url}: {e}")
+        logger.error(f"Error processing category listing batch {batch_num} at {url}: {e}")
 
 
 async def main() -> None:
