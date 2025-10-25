@@ -93,6 +93,126 @@ class SupabaseLoader:
             )
             return None
 
+    async def insert_product_urls(self, urls_list: list[Dict[str, Any]]) -> int:
+        """
+        Insert product URLs to product_urls table for Phase 1.
+
+        Args:
+            urls_list: List of dicts with keys: pharmacy_source, product_url, site_code
+
+        Returns:
+            Number of URLs inserted (excluding duplicates)
+        """
+        try:
+            if not urls_list:
+                logger.warning("No URLs to insert")
+                return 0
+
+            # Add timestamp to all records
+            for url_data in urls_list:
+                url_data["created_at"] = datetime.utcnow().isoformat()
+
+            # Batch insert with upsert (on conflict: pharmacy_source, product_url)
+            result = (
+                self.client.table("product_urls")
+                .upsert(urls_list, on_conflict="pharmacy_source,product_url")
+                .execute()
+            )
+
+            inserted = len(result.data) if result.data else 0
+            logger.info(f"Inserted {inserted} product URLs")
+            return inserted
+
+        except Exception as e:
+            logger.error(f"Error inserting product URLs: {e}")
+            return 0
+
+    async def get_urls_to_scrape(self, pharmacy_source: str) -> list[str]:
+        """
+        Get product URLs that need scraping from product_urls table.
+
+        Args:
+            pharmacy_source: Pharmacy source to filter by
+
+        Returns:
+            List of product URLs to scrape
+        """
+        try:
+            # Query product_urls table for this pharmacy
+            result = (
+                self.client.table("product_urls")
+                .select("product_url")
+                .eq("pharmacy_source", pharmacy_source)
+                .execute()
+            )
+
+            urls = [row["product_url"] for row in result.data if row.get("product_url")]
+            logger.info(f"Found {len(urls)} URLs to scrape for {pharmacy_source}")
+            return urls
+
+        except Exception as e:
+            logger.error(f"Error getting URLs to scrape: {e}")
+            return []
+
+    async def get_checkpoint(self, pharmacy_source: str, category: str) -> int:
+        """
+        Get the last checkpoint (page number) for resuming URL collection.
+
+        Args:
+            pharmacy_source: Pharmacy source
+            category: Category being scraped
+
+        Returns:
+            Last page number scraped, or 0 if no checkpoint exists
+        """
+        try:
+            result = (
+                self.client.table("scraping_checkpoints")
+                .select("page_number")
+                .eq("pharmacy_source", pharmacy_source)
+                .eq("category", category)
+                .execute()
+            )
+
+            if result.data and len(result.data) > 0:
+                page_num = result.data[0].get("page_number", 0)
+                logger.info(f"Resuming from checkpoint: page {page_num}")
+                return page_num
+            else:
+                logger.info("No checkpoint found, starting from page 0")
+                return 0
+
+        except Exception as e:
+            logger.warning(f"Error getting checkpoint: {e}, starting from page 0")
+            return 0
+
+    async def save_checkpoint(self, pharmacy_source: str, category: str, page_number: int) -> None:
+        """
+        Save checkpoint for resuming URL collection later.
+
+        Args:
+            pharmacy_source: Pharmacy source
+            category: Category being scraped
+            page_number: Current page number
+        """
+        try:
+            data = {
+                "pharmacy_source": pharmacy_source,
+                "category": category,
+                "page_number": page_number,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+            # Upsert checkpoint
+            self.client.table("scraping_checkpoints").upsert(
+                data, on_conflict="pharmacy_source,category"
+            ).execute()
+
+            logger.debug(f"Checkpoint saved: page {page_number}")
+
+        except Exception as e:
+            logger.error(f"Error saving checkpoint: {e}")
+
     async def complete_scraping_run(
         self,
         run_id: str,

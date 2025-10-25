@@ -1,8 +1,13 @@
-"""Punto Farma scraper for pharmaceutical products."""
+"""Punto Farma scraper for pharmaceutical products - 2-PHASE APPROACH.
+
+Phase 1: Collect all product URLs by clicking through all pages
+Phase 2: Scrape each URL from database where product_name IS NULL or scraped_at < today
+"""
 
 import asyncio
 import re
-from datetime import timedelta
+import sys
+from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional
 from crawlee import Request
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
@@ -20,7 +25,7 @@ logger = get_logger()
 # Create router for handling different page types
 router = Router()
 
-# Global db_loader instance (will be set in main())
+# Global db_loader instance
 db_loader_instance = None
 
 
@@ -202,10 +207,101 @@ class PuntoFarmaProduct:
             return None
 
 
-@router.default_handler
-async def handle_product_page(context: PlaywrightCrawlingContext) -> None:
-    """Handle product detail pages."""
-    logger.info(f"Processing product page: {context.request.url}")
+# ==============================================================================
+# PHASE 1: URL COLLECTION
+# ==============================================================================
+
+@router.handler("url_collection")
+async def collect_urls(context: PlaywrightCrawlingContext) -> None:
+    """Phase 1: Click and save URLs after EACH page load."""
+    url = context.request.url
+    logger.info(f"Collecting URLs from: {url}")
+
+    try:
+        # Wait for product grid to load
+        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
+
+        base_url = PHARMACY_URLS["punto_farma"]["base_url"]
+        max_clicks = 600  # Safety limit (~520 expected)
+
+        clicks = 0
+        no_button_count = 0
+        seen_urls = set()  # Track URLs we've already processed
+
+        logger.info("Starting URL collection...")
+
+        while clicks < max_clicks:
+            # Extract current page URLs
+            product_links = await context.page.locator("a[href*='/producto/']").all()
+
+            urls_to_insert = []
+            for link in product_links:
+                href = await link.get_attribute("href")
+                if href:
+                    if not href.startswith("http"):
+                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+
+                    # Skip if already seen (deduplicates within page and across pages)
+                    if href in seen_urls:
+                        continue
+                    seen_urls.add(href)
+
+                    site_code = None
+                    url_match = re.search(r"/producto/(\d+)/", href)
+                    if url_match:
+                        site_code = url_match.group(1)
+
+                    urls_to_insert.append({
+                        "pharmacy_source": "punto_farma",
+                        "product_url": href,
+                        "site_code": site_code,
+                    })
+
+            # Save new URLs to database
+            global db_loader_instance
+            if db_loader_instance and urls_to_insert:
+                inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                logger.info(f"Page {clicks + 1}: Found {len(urls_to_insert)} new URLs, saved {inserted}")
+
+            # Click "Cargar más"
+            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
+
+            try:
+                button_visible = await load_more_button.is_visible()
+            except:
+                no_button_count += 1
+                if no_button_count >= 3:
+                    logger.info(f"Button check failed after {clicks} clicks, finishing")
+                    break
+                await context.page.wait_for_timeout(500)
+                continue
+
+            if button_visible:
+                no_button_count = 0
+                await load_more_button.click()
+                clicks += 1
+                await context.page.wait_for_timeout(500)  # Increased from 300ms to 500ms
+            else:
+                no_button_count += 1
+                if no_button_count >= 3:
+                    logger.info(f"No more 'Cargar más' button after {clicks} clicks")
+                    break
+                await context.page.wait_for_timeout(500)
+
+        logger.info(f"Finished: {clicks} clicks, {len(seen_urls)} total unique URLs collected")
+
+    except Exception as e:
+        logger.error(f"Error collecting URLs from {url}: {e}")
+
+
+# ==============================================================================
+# PHASE 2: PRODUCT SCRAPING
+# ==============================================================================
+
+@router.handler("product_detail")
+async def scrape_product(context: PlaywrightCrawlingContext) -> None:
+    """Phase 2: Scrape product detail page and UPDATE database record."""
+    logger.info(f"Scraping product: {context.request.url}")
 
     try:
         # Wait for product name to load
@@ -219,119 +315,26 @@ async def handle_product_page(context: PlaywrightCrawlingContext) -> None:
         product_data = PuntoFarmaProduct.extract_from_html(html, context.request.url)
 
         if product_data:
-            # Save to dataset (Crawlee built-in storage)
-            await context.push_data(product_data)
-
-            # Save to Supabase immediately
+            # Update database record (upsert based on pharmacy_source + product_url)
             global db_loader_instance
             if db_loader_instance:
                 product_id = await db_loader_instance.upsert_product(product_data)
                 if product_id:
-                    logger.info(f"Saved to Supabase: {product_data['product_name']}")
+                    logger.info(f"Saved: {product_data['product_name']}")
                 else:
-                    logger.warning(f"Failed to save to Supabase: {product_data['product_name']}")
+                    logger.warning(f"Failed to save: {product_data['product_name']}")
             else:
-                logger.info(f"Saved to local dataset: {product_data['product_name']}")
+                logger.info(f"No DB loader: {product_data['product_name']}")
         else:
             logger.warning(f"Failed to extract product from {context.request.url}")
 
     except Exception as e:
-        logger.error(f"Error processing product page {context.request.url}: {e}")
+        logger.error(f"Error scraping product {context.request.url}: {e}")
 
 
-@router.handler("category_listing")
-async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
-    """Handle ONE batch of category listing, then re-enqueue for next batch."""
-    url = context.request.url
-
-    # Get batch tracking from user_data
-    batch_num = context.request.user_data.get("batch", 1)
-    clicks_done = context.request.user_data.get("clicks_done", 0)
-
-    logger.info(f"Processing batch {batch_num} (after {clicks_done} previous clicks): {url}")
-
-    try:
-        # Wait for product grid
-        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
-
-        base_url = PHARMACY_URLS["punto_farma"]["base_url"]
-        batch_size = 20  # Click 20 times per batch (small enough to finish in 30-40 seconds)
-        max_total_clicks = 600
-
-        # Click "Cargar más" batch_size times
-        clicks_this_batch = 0
-        no_button_count = 0
-
-        while clicks_this_batch < batch_size and (clicks_done + clicks_this_batch) < max_total_clicks:
-            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
-
-            try:
-                button_visible = await load_more_button.is_visible()
-            except:
-                # Page closed or button disappeared
-                no_button_count += 1
-                if no_button_count >= 2:
-                    logger.info(f"Button check failed {no_button_count} times, assuming no more pages")
-                    break
-                await context.page.wait_for_timeout(1000)
-                continue
-
-            if button_visible:
-                no_button_count = 0
-                await load_more_button.scroll_into_view_if_needed()
-                await load_more_button.click()
-                clicks_this_batch += 1
-                await context.page.wait_for_timeout(200)  # Fast clicking
-            else:
-                no_button_count += 1
-                if no_button_count >= 2:
-                    logger.info(f"No more 'Cargar más' button after {clicks_done + clicks_this_batch} total clicks")
-                    break
-                await context.page.wait_for_timeout(1000)
-
-        total_clicks_now = clicks_done + clicks_this_batch
-        logger.info(f"Batch {batch_num}: Clicked {clicks_this_batch} times (total: {total_clicks_now})")
-
-        # Extract and enqueue products
-        product_links = await context.page.locator("a[href*='/producto/']").all()
-        logger.info(f"Found {len(product_links)} product links on page")
-
-        enqueued = set()
-        for link in product_links:
-            href = await link.get_attribute("href")
-            if href:
-                if not href.startswith("http"):
-                    href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
-                if href not in enqueued:
-                    await context.add_requests([Request.from_url(href, label="default")])
-                    enqueued.add(href)
-
-        logger.info(f"Batch {batch_num}: Enqueued {len(enqueued)} products")
-
-        # Check if we should continue (button still exists and haven't hit limit)
-        if no_button_count < 2 and total_clicks_now < max_total_clicks:
-            # Re-enqueue THIS SAME URL with updated batch info
-            # Add batch number to URL to avoid Crawlee deduplication
-            next_batch = batch_num + 1
-            next_url = f"{url}{'&' if '?' in url else '?'}batch={next_batch}"
-            logger.info(f"Enqueueing batch {next_batch} to continue pagination")
-
-            await context.add_requests([
-                Request.from_url(
-                    next_url,
-                    label="category_listing",
-                    user_data={
-                        "batch": next_batch,
-                        "clicks_done": total_clicks_now
-                    }
-                )
-            ])
-        else:
-            logger.info(f"Category complete: {total_clicks_now} total pages loaded, {len(enqueued)} products from final batch")
-
-    except Exception as e:
-        logger.error(f"Error processing category listing batch {batch_num} at {url}: {e}")
-
+# ==============================================================================
+# MAIN
+# ==============================================================================
 
 async def main() -> None:
     """Run Punto Farma scraper."""
@@ -342,7 +345,7 @@ async def main() -> None:
 
     # Initialize Supabase loader
     db_loader = SupabaseLoader()
-    db_loader_instance = db_loader  # Set global instance for handlers
+    db_loader_instance = db_loader
 
     # Configure proxy rotation (if proxies provided)
     proxy_configuration = None
@@ -356,46 +359,108 @@ async def main() -> None:
     else:
         logger.info("No proxies configured - using direct connection")
 
-    # Start scraping run
-    run_id = await db_loader.start_scraping_run("punto_farma", "medicamentos+nutricion")
+    # Check command line argument for phase
+    phase = sys.argv[1] if len(sys.argv) > 1 else "phase1"
 
-    try:
-        # Create crawler with anti-detection measures
-        crawler = PlaywrightCrawler(
-            request_handler=router,
-            proxy_configuration=proxy_configuration,
-            max_requests_per_crawl=settings.max_requests_per_crawl,
-            max_request_retries=2,  # Limit retries to avoid getting stuck
-            headless=True,
-        )
+    if phase == "phase1":
+        # ============================================================
+        # PHASE 1: COLLECT ALL PRODUCT URLS
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 1: Collecting product URLs from all pages")
+        logger.info("=" * 80)
 
-        # Start URLs (category pages)
-        start_urls = [
-            f"{base_url}/categoria/1/medicamentos",  # 440 pages, 12 products each = ~5,280 products
-            f"{base_url}/categoria/238/nutricion-y-deporte",  # 80 pages, ~960 products
-        ]
+        run_id = await db_loader.start_scraping_run("punto_farma_urls", "medicamentos+nutricion")
 
-        logger.info(f"Starting Punto Farma scraper with URLs: {start_urls}")
+        try:
+            crawler = PlaywrightCrawler(
+                request_handler=router,
+                proxy_configuration=proxy_configuration,
+                max_requests_per_crawl=10,  # Just 2 category pages (not product pages)
+                max_request_retries=2,
+                request_handler_timeout=timedelta(hours=4),  # 4 hours for clicking through all pages
+                headless=True,
+            )
 
-        # Enqueue start URLs as category listings
-        await crawler.run([
-            Request.from_url(url, label="category_listing") for url in start_urls
-        ])
+            start_urls = [
+                f"{base_url}/categoria/1/medicamentos",
+                f"{base_url}/categoria/238/nutricion-y-deporte",
+            ]
 
-        # Get final count from Crawlee storage
-        dataset = await crawler.get_dataset()
-        data = await dataset.get_data()
+            logger.info(f"Starting URL collection from: {start_urls}")
 
-        total_scraped = len(data.items)
-        logger.info(f"Scraping completed: {total_scraped} products scraped and saved to Supabase")
+            await crawler.run([
+                Request.from_url(url, label="url_collection") for url in start_urls
+            ])
 
-        # Complete scraping run
-        await db_loader.complete_scraping_run(run_id, total_scraped, 0)
+            await db_loader.complete_scraping_run(run_id, 0, 0)
+            logger.info("=" * 80)
+            logger.info("PHASE 1 COMPLETE!")
+            logger.info("Run Phase 2 to scrape products:")
+            logger.info("  python -m scrapers.punto_farma phase2")
+            logger.info("=" * 80)
 
-    except Exception as e:
-        logger.error(f"Scraping failed: {e}")
-        await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
-        raise
+        except Exception as e:
+            logger.error(f"Phase 1 failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
+
+    elif phase == "phase2":
+        # ============================================================
+        # PHASE 2: SCRAPE PRODUCTS FROM DATABASE URLS
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 2: Scraping products from collected URLs")
+        logger.info("=" * 80)
+
+        # Get URLs to scrape (product_name IS NULL or scraped_at < today)
+        urls_to_scrape = await db_loader.get_urls_to_scrape("punto_farma")
+        logger.info(f"Found {len(urls_to_scrape)} URLs to scrape")
+
+        if not urls_to_scrape:
+            logger.info("No URLs to scrape! Run phase1 first or all products already scraped today.")
+            return
+
+        run_id = await db_loader.start_scraping_run("punto_farma", f"phase2_{len(urls_to_scrape)}_products")
+
+        try:
+            crawler = PlaywrightCrawler(
+                request_handler=router,
+                proxy_configuration=proxy_configuration,
+                max_requests_per_crawl=len(urls_to_scrape) + 100,
+                max_request_retries=2,
+                request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
+                headless=True,
+            )
+
+            # Enqueue all product URLs
+            requests = [
+                Request.from_url(url, label="product_detail") for url in urls_to_scrape
+            ]
+
+            logger.info(f"Starting scraping of {len(requests)} products...")
+
+            await crawler.run(requests)
+
+            # Get final count
+            dataset = await crawler.get_dataset()
+            data = await dataset.get_data()
+            total_scraped = len(data.items)
+
+            logger.info("=" * 80)
+            logger.info(f"PHASE 2 COMPLETE: {total_scraped} products scraped!")
+            logger.info("=" * 80)
+
+            await db_loader.complete_scraping_run(run_id, total_scraped, 0)
+
+        except Exception as e:
+            logger.error(f"Phase 2 failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
+
+    else:
+        logger.error(f"Unknown phase: {phase}. Use 'phase1' or 'phase2'")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
