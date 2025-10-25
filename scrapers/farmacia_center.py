@@ -254,8 +254,8 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
         previous_height = 0
         scroll_attempts = 0
         no_change_count = 0
-        max_scroll_attempts = 200
-        max_no_change = 3  # Stop after 3 consecutive scrolls with no change
+        max_scroll_attempts = 500
+        max_no_change = 5  # Stop after 5 consecutive scrolls with no change
 
         while scroll_attempts < max_scroll_attempts:
             # Scroll to bottom

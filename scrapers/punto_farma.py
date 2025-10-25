@@ -249,7 +249,7 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
 
         # Keep clicking "Cargar más" button until no more products
         page_count = 0
-        max_pages = 3  # TEST: Start with 3 pages, change to 440 for full run
+        max_pages = 500  # Allow up to 500 pages (should cover all products)
 
         while page_count < max_pages:
             page_count += 1

@@ -325,7 +325,7 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
 
         previous_height = 0
         scroll_attempts = 0
-        max_scroll_attempts = 100  # Prevent infinite loops
+        max_scroll_attempts = 500  # Allow more scrolls to get all products
 
         while scroll_attempts < max_scroll_attempts:
             # Scroll to bottom
