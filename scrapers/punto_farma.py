@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from crawlee import Request
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
@@ -247,48 +248,52 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
         # Wait for product grid to load
         await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
 
-        # Keep clicking "Cargar más" button until no more products
         page_count = 0
-        max_pages = 500  # Allow up to 500 pages (should cover all products)
 
-        while page_count < max_pages:
-            page_count += 1
-            logger.info(f"Loading page {page_count}/{max_pages}...")
-
-            # Extract product links from current view
-            product_links = await context.page.locator("a[href*='/producto/']").all()
-            logger.info(f"Found {len(product_links)} product links on page {page_count}")
-
-            # Enqueue each product link
-            for link in product_links:
-                href = await link.get_attribute("href")
-                if href:
-                    # Convert relative URLs to absolute
-                    if not href.startswith("http"):
-                        base_url = PHARMACY_URLS["punto_farma"]["base_url"]
-                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
-
-                    await context.add_requests([Request.from_url(href, label="default")])
-                    logger.debug(f"Enqueued product: {href}")
-
-            # Check if "Cargar más" button exists and click it
+        # Phase 1: Click all "Cargar más" buttons (fast, no extraction)
+        logger.info("Phase 1: Clicking all 'Cargar más' buttons to load products...")
+        while True:
+            # Check if "Cargar más" button exists
             load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
             button_count = await load_more_button.count()
 
             if button_count > 0:
-                # Scroll to button
+                page_count += 1
+                # Scroll to button and click
                 await load_more_button.scroll_into_view_if_needed()
-                await context.page.wait_for_timeout(500)
-
-                # Click button
                 await load_more_button.click()
-                logger.info(f"Clicked 'Cargar más' button")
 
-                # Wait for new products to load
-                await context.page.wait_for_timeout(2000)
+                if page_count % 20 == 0:
+                    logger.info(f"Clicked 'Cargar más' {page_count} times...")
+
+                # Brief wait for new products to load
+                await context.page.wait_for_timeout(300)
             else:
-                logger.info("No more 'Cargar más' button - reached end of products")
+                logger.info(f"Phase 1 complete: Clicked 'Cargar más' {page_count} times, all products loaded")
                 break
+
+        # Phase 2: Extract and enqueue ALL product links at once
+        logger.info("Phase 2: Extracting all product links...")
+        product_links = await context.page.locator("a[href*='/producto/']").all()
+        logger.info(f"Found {len(product_links)} total product links")
+
+        # Enqueue each product link
+        base_url = PHARMACY_URLS["punto_farma"]["base_url"]
+        enqueued_urls = set()
+
+        for link in product_links:
+            href = await link.get_attribute("href")
+            if href:
+                # Convert relative URLs to absolute
+                if not href.startswith("http"):
+                    href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+
+                # Avoid duplicates
+                if href not in enqueued_urls:
+                    await context.add_requests([Request.from_url(href, label="default")])
+                    enqueued_urls.add(href)
+
+        logger.info(f"Phase 2 complete: Enqueued {len(enqueued_urls)} unique product URLs")
 
     except Exception as e:
         logger.error(f"Error processing category listing {context.request.url}: {e}")
