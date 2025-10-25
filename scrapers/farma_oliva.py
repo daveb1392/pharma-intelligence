@@ -118,6 +118,18 @@ class FarmaOlivaProduct:
                 if not discount_percentage:
                     discount_percentage = round((discount_amount / original_price) * 100, 2)
 
+            # Brand (from logo-marca link)
+            brand = None
+            brand_elem = soup.select_one("a.logo-marca")
+            if brand_elem:
+                brand = brand_elem.get_text(strip=True)
+
+            # If brand not found, try data-product_brand on the buy button
+            if not brand:
+                buy_button = soup.select_one("button[data-product_brand]")
+                if buy_button:
+                    brand = buy_button.get("data-product_brand")
+
             # Product details (Presentación, Droga, etc.)
             product_details = {}
             short_desc = soup.select_one(".ecommercepro-product-details__short-description")
@@ -148,7 +160,7 @@ class FarmaOlivaProduct:
                 "site_code": site_code,
                 "barcode": barcode,
                 "product_name": product_name,
-                "brand": product_details.get("Droga"),  # Using "Droga" as brand proxy
+                "brand": brand,
                 "product_description": product_description,
                 "product_details": product_details,
                 "category_path": category_path,
