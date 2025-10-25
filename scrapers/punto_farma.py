@@ -253,33 +253,36 @@ async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
         # Phase 1: Click all "Cargar más" buttons (fast, no extraction)
         logger.info("Phase 1: Clicking all 'Cargar más' buttons to load products...")
         max_clicks = 1000  # Safety limit (should be ~520 for all pages, but adding buffer)
+        no_button_count = 0  # Track consecutive failures to find button
 
         while page_count < max_clicks:
-            try:
-                # Check if "Cargar más" button exists and is visible
-                load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
+            # Check if "Cargar más" button exists
+            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
+            button_visible = await load_more_button.is_visible()
 
-                # Wait for button to be visible (with timeout)
-                try:
-                    await load_more_button.wait_for(state="visible", timeout=3000)
-                except:
-                    logger.info(f"Phase 1 complete: 'Cargar más' button no longer visible after {page_count} clicks")
-                    break
+            if button_visible:
+                # Reset counter since we found the button
+                no_button_count = 0
 
                 # Scroll to button and click
                 await load_more_button.scroll_into_view_if_needed()
                 await load_more_button.click()
                 page_count += 1
 
-                if page_count % 20 == 0:
+                if page_count % 50 == 0:
                     logger.info(f"Clicked 'Cargar más' {page_count} times...")
 
-                # Wait for new products to load - check for new product links appearing
-                await context.page.wait_for_timeout(800)
+                # Wait for new products to load
+                await context.page.wait_for_timeout(500)
+            else:
+                # Button not visible - maybe finished, or maybe just slow to load
+                no_button_count += 1
+                if no_button_count >= 3:
+                    logger.info(f"Phase 1 complete: 'Cargar más' button not found after {page_count} clicks")
+                    break
 
-            except Exception as e:
-                logger.info(f"Phase 1 complete: Button clicking stopped after {page_count} clicks ({e})")
-                break
+                # Wait a bit and try again
+                await context.page.wait_for_timeout(1000)
 
         if page_count >= max_clicks:
             logger.warning(f"Reached max clicks limit ({max_clicks}), stopping")
