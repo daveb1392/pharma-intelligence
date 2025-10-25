@@ -9,7 +9,17 @@
       "description": "Select which pharmacy website to scrape",
       "default": "all",
       "enum": ["all", "farma_oliva", "punto_farma", "farmacia_center", "farmacia_catedral"],
-      "enumTitles": ["All Pharmacies", "Farma Oliva", "Punto Farma", "Farmacia Center", "Farmacia Catedral"]
+      "enumTitles": ["All Pharmacies", "Farma Oliva", "Punto Farma", "Farmacia Center", "Farmacia Catedral"],
+      "editor": "select"
+    },
+    "punto_farma_phase": {
+      "title": "Punto Farma Phase (only for Punto Farma)",
+      "type": "string",
+      "description": "Phase 1: Collect all product URLs | Phase 2: Scrape all collected products",
+      "default": "phase1",
+      "enum": ["phase1", "phase2"],
+      "enumTitles": ["Phase 1: Collect URLs", "Phase 2: Scrape Products"],
+      "editor": "select"
     }
   },
   "required": ["pharmacy"]

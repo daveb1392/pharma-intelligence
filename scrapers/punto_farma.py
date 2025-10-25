@@ -369,7 +369,7 @@ async def main() -> None:
         try:
             from crawlee import Actor
             actor_input = await Actor.get_input() or {}
-            phase = actor_input.get("phase", "phase1")
+            phase = actor_input.get("punto_farma_phase", "phase1")
         except:
             phase = "phase1"
 
