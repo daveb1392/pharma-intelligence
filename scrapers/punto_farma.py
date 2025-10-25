@@ -336,8 +336,12 @@ async def scrape_product(context: PlaywrightCrawlingContext) -> None:
 # MAIN
 # ==============================================================================
 
-async def main() -> None:
-    """Run Punto Farma scraper."""
+async def main(phase: str = None) -> None:
+    """Run Punto Farma scraper.
+
+    Args:
+        phase: Scraping phase ("phase1" or "phase2"). If None, determined from CLI args or defaults to "phase1".
+    """
     global db_loader_instance
 
     settings = get_settings()
@@ -359,18 +363,11 @@ async def main() -> None:
     else:
         logger.info("No proxies configured - using direct connection")
 
-    # Check command line argument or Apify input for phase
-    # Priority: 1) Command line arg, 2) Apify input, 3) Default to phase1
-    phase = None
-    if len(sys.argv) > 1:
-        phase = sys.argv[1]
-    else:
-        # Try to get from Apify Actor.get_input() (for Apify deployment)
-        try:
-            from crawlee import Actor
-            actor_input = await Actor.get_input() or {}
-            phase = actor_input.get("punto_farma_phase", "phase1")
-        except:
+    # Determine phase: 1) Function parameter, 2) CLI arg, 3) Default to phase1
+    if phase is None:
+        if len(sys.argv) > 1:
+            phase = sys.argv[1]
+        else:
             phase = "phase1"
 
     if phase == "phase1":
