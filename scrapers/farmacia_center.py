@@ -464,6 +464,7 @@ async def main(phase: str = None) -> None:
                 max_requests_per_crawl=len(urls_to_scrape) + 100,
                 max_request_retries=2,
                 request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
+                max_concurrency=20,  # Increased concurrency for faster scraping
                 headless=True,
             )
 
