@@ -10,7 +10,7 @@ import re
 import sys
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
-from crawlee import Request
+from crawlee import Request, ConcurrencySettings
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
 from crawlee.proxy_configuration import ProxyConfiguration
 from crawlee.router import Router
@@ -464,7 +464,7 @@ async def main(phase: str = None) -> None:
                 max_requests_per_crawl=len(urls_to_scrape) + 100,
                 max_request_retries=2,
                 request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
-                max_concurrency=20,  # Increased concurrency for faster scraping
+                concurrency_settings=ConcurrencySettings(max_concurrency=20),  # Increased concurrency for faster scraping
                 headless=True,
             )
 
