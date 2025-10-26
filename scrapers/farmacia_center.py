@@ -265,7 +265,7 @@ async def collect_urls(context: PlaywrightCrawlingContext) -> None:
         previous_height = 0
         scroll_attempts = 0
         no_change_count = 0
-        max_scroll_attempts = 1000  # Increased for 4,199 products
+        max_scroll_attempts = 10000  # Safety limit for large catalogs
         max_no_change = 15  # Wait for 15 consecutive scrolls with no change (15 * 3sec = 45sec patience)
         seen_urls = set()  # Track URLs we've already processed
 

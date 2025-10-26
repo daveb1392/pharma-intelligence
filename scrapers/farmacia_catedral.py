@@ -281,92 +281,102 @@ class FarmaciaCatedralProduct:
 
 
 # ==============================================================================
-# PHASE 1: URL COLLECTION
+# PHASE 1: URL COLLECTION (using JSON API)
 # ==============================================================================
 
-@router.handler("url_collection")
-async def collect_urls(context: PlaywrightCrawlingContext) -> None:
-    """Phase 1: Scroll and save all product URLs to database."""
-    logger.info(f"Collecting URLs from: {context.request.url}")
+async def collect_urls_from_api() -> int:
+    """Phase 1: Fetch product URLs from JSON API and save to database.
 
-    try:
-        # Wait for product grid to load
-        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
-        await context.page.wait_for_timeout(1000)
+    Returns:
+        Number of unique URLs collected
+    """
+    import httpx
 
-        # Lazy scroll to load all products (4-5K expected)
-        logger.info("Starting lazy scroll to load all products (4-5K expected)...")
+    base_url = "https://www.farmaciacatedral.com.py"
+    api_url = f"{base_url}/get-productos"
 
-        base_url = PHARMACY_URLS["farmacia_catedral"]["base_url"]
-        previous_height = 0
-        scroll_attempts = 0
-        no_change_count = 0
-        max_scroll_attempts = 1000  # Increased for 4-5K products
-        max_no_change = 15  # Wait for 15 consecutive scrolls with no change (15 * 3sec = 45sec patience)
-        seen_urls = set()  # Track URLs we've already processed
+    logger.info("Fetching first page to get total pages...")
 
-        while scroll_attempts < max_scroll_attempts:
-            # Extract product links from current view and save immediately
-            product_links = await context.page.locator("a[href*='/producto/']").all()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Get first page to determine total pages
+        params = {
+            "page": 1,
+            "categoria": 1,
+            "ordenar_por": 0,
+            "marcas": "",
+            "categorias": "",
+            "categorias_top": 1,
+            "porcentajes": "",
+            "atributos": ""
+        }
 
-            urls_to_insert = []
-            for link in product_links:
-                href = await link.get_attribute("href")
-                if href:
-                    # Convert to absolute URL if needed
-                    if not href.startswith("http"):
-                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+        try:
+            response = await client.get(api_url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
-                    # Skip if already seen
-                    if href in seen_urls:
-                        continue
-                    seen_urls.add(href)
+            total_pages = data["paginacion"]["last_page"]
+            total_items = data["paginacion"]["total"]
+            per_page = data["paginacion"]["per_page"]
 
-                    # Extract site_code from URL: /producto/66/...
-                    site_code = None
-                    url_match = re.search(r"/producto/(\d+)/", href)
-                    if url_match:
-                        site_code = url_match.group(1)
+            logger.info(f"Found {total_items} products across {total_pages} pages ({per_page} per page)")
 
-                    urls_to_insert.append({
-                        "pharmacy_source": "farmacia_catedral",
-                        "product_url": href,
-                        "site_code": site_code,
-                    })
+            seen_urls = set()
 
-            # Save new URLs to database
-            global db_loader_instance
-            if db_loader_instance and urls_to_insert:
-                inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
-                logger.info(f"Scroll {scroll_attempts + 1}: Found {len(urls_to_insert)} new URLs, saved {inserted}")
+            # Loop through all pages
+            for page in range(1, total_pages + 1):
+                params["page"] = page
 
-            # Scroll to bottom
-            await context.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await context.page.wait_for_timeout(3000)  # 3 seconds delay for slow page loading
+                try:
+                    response = await client.get(api_url, params=params)
+                    response.raise_for_status()
+                    page_data = response.json()
 
-            # Get new scroll height
-            current_height = await context.page.evaluate("document.body.scrollHeight")
+                    products = page_data["paginacion"]["data"]
+                    urls_to_insert = []
 
-            # Check if we've reached the bottom
-            if current_height == previous_height:
-                no_change_count += 1
-                logger.debug(f"No height change ({no_change_count}/{max_no_change})")
-                if no_change_count >= max_no_change:
-                    logger.info(f"Reached bottom after {scroll_attempts} scrolls")
-                    break
-            else:
-                no_change_count = 0
+                    for product in products:
+                        product_url = product.get("url_ver")
+                        if not product_url:
+                            continue
 
-            previous_height = current_height
-            scroll_attempts += 1
+                        # Skip duplicates
+                        if product_url in seen_urls:
+                            continue
+                        seen_urls.add(product_url)
 
-            if scroll_attempts % 10 == 0:
-                logger.info(f"Progress: {len(seen_urls)} total unique URLs collected so far")
+                        # Extract site_code from URL or use codigo_articulo
+                        site_code = product.get("codigo_articulo")
+                        if not site_code:
+                            url_match = re.search(r"/producto/(\d+)/", product_url)
+                            if url_match:
+                                site_code = url_match.group(1)
 
-        logger.info(f"Finished: {scroll_attempts} scrolls, {len(seen_urls)} total unique URLs collected")
+                        urls_to_insert.append({
+                            "pharmacy_source": "farmacia_catedral",
+                            "product_url": product_url,
+                            "site_code": site_code,
+                        })
 
-    except Exception as e:
-        logger.error(f"Error collecting URLs from {context.request.url}: {e}")
+                    # Save URLs to database
+                    global db_loader_instance
+                    if db_loader_instance and urls_to_insert:
+                        inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                        logger.info(f"Page {page}/{total_pages}: Saved {inserted} URLs ({len(seen_urls)} total)")
+
+                    # Small delay to be nice to the server
+                    await asyncio.sleep(0.1)
+
+                except Exception as e:
+                    logger.error(f"Error fetching page {page}: {e}")
+                    continue
+
+            logger.info(f"Finished: {len(seen_urls)} total unique URLs collected from API")
+            return len(seen_urls)
+
+        except Exception as e:
+            logger.error(f"Error fetching API data: {e}")
+            raise
 
 
 # ==============================================================================
@@ -447,33 +457,21 @@ async def main(phase: str = None) -> None:
 
     if phase == "phase1":
         # ============================================================
-        # PHASE 1: COLLECT ALL PRODUCT URLS
+        # PHASE 1: COLLECT ALL PRODUCT URLS (using JSON API - FAST!)
         # ============================================================
         logger.info("=" * 80)
-        logger.info("PHASE 1: Collecting product URLs from medicamentos category")
+        logger.info("PHASE 1: Collecting product URLs from JSON API")
         logger.info("=" * 80)
 
-        run_id = await db_loader.start_scraping_run("farmacia_catedral_urls", "medicamentos")
+        run_id = await db_loader.start_scraping_run("farmacia_catedral_urls", "medicamentos_api")
 
         try:
-            crawler = PlaywrightCrawler(
-                request_handler=router,
-                proxy_configuration=proxy_configuration,
-                max_requests_per_crawl=10,  # Just 1 category page
-                max_request_retries=2,
-                request_handler_timeout=timedelta(hours=2),  # 2 hours for scrolling through all products
-                headless=True,
-            )
-
-            # FIXED URL: Use correct medicamentos category page
-            start_url = f"{base_url}/categoria/1/medicamentos?marcas=&categorias=&categorias_top=1"
-            logger.info(f"Starting URL collection from: {start_url}")
-
-            await crawler.run([Request.from_url(start_url, label="url_collection")])
+            # Use JSON API instead of scrolling - much faster!
+            total_urls = await collect_urls_from_api()
 
             await db_loader.complete_scraping_run(run_id, 0, 0)
             logger.info("=" * 80)
-            logger.info("PHASE 1 COMPLETE!")
+            logger.info(f"PHASE 1 COMPLETE! Collected {total_urls} URLs from API")
             logger.info("Run Phase 2 to scrape products:")
             logger.info("  python -m scrapers.farmacia_catedral phase2")
             logger.info("=" * 80)

@@ -222,7 +222,7 @@ async def collect_urls(context: PlaywrightCrawlingContext) -> None:
         await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
 
         base_url = PHARMACY_URLS["punto_farma"]["base_url"]
-        max_clicks = 600  # Safety limit (~520 expected)
+        max_clicks = 10000  # Safety limit for large catalogs
 
         clicks = 0
         no_button_count = 0
