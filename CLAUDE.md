@@ -201,13 +201,32 @@ python -m scrapers.farma_oliva
 ### 2. Punto Farma Scraper (COMPLETED)
 **File**: `scrapers/punto_farma.py`
 
-**Navigation Strategy**: BATCHED infinite scroll with "Cargar más" button
+**Navigation Strategy**: 2-PHASE APPROACH (URL collection → Product scraping)
+
+**Why 2-Phase Approach:**
+- Punto Farma has ~520 pages requiring "Cargar más" button clicks
+- Clicking through all pages takes ~260 seconds (exceeds typical handler timeouts)
+- Separating URL collection from product scraping improves reliability and allows parallel execution
+
+**Phase 1: URL Collection**
+- ✅ Click "Cargar más" button up to 520 times to load all products
+- ✅ Extract product URLs from each page load
+- ✅ Save URLs progressively to `product_urls` table in Supabase
+- ✅ In-memory deduplication with `set()` + database unique constraint
+- ✅ 4-hour timeout to handle long clicking sessions without interruption
+- ✅ Runs on Apify with input: `{"pharmacy": "punto_farma", "punto_farma_phase": "phase1"}`
+
+**Phase 2: Product Scraping**
+- ✅ Query all URLs from `product_urls` table (no pagination limit)
+- ✅ Scrape each product page and save to `products` table
+- ✅ 30-second timeout per product page
+- ✅ Runs on Apify with input: `{"pharmacy": "punto_farma", "punto_farma_phase": "phase2"}`
+- ⚠️ Re-scrapes ALL URLs every run (no tracking of already-scraped URLs)
+- ✅ Upsert updates existing products (safe to re-scrape)
 
 **Features Implemented:**
-- ✅ PlaywrightCrawler with batched pagination (avoids 60s timeout + memory issues)
-- ✅ Each batch: Click 20× → Extract products → Re-enqueue next batch
-- ✅ Unique URL per batch (`?batch=N`) to avoid Crawlee deduplication
-- ✅ "Cargar más" button clicking with retry logic for slow AJAX
+- ✅ PlaywrightCrawler with 4-hour timeout for Phase 1
+- ✅ "Cargar más" button clicking with retry logic
 - ✅ Product detail extraction from HTML
 - ✅ Brand extraction from `<a class="category" href="/marca/...">`
 - ✅ Product description from `<div class="atributos_body__wyXR6 accordion-body">`
@@ -230,25 +249,28 @@ python -m scrapers.farma_oliva
 - Bank discount: `h6:has-text('Con Itau')` + price in same container
 - "Cargar más" button: `button.btn.btn-primary:has-text('Cargar más')`
 
-**Batching Strategy:**
-- **Batch size**: 20 clicks per batch (~240 products)
-- **Total batches**: ~26 batches (520 pages ÷ 20)
-- **Each batch**: Completes in ~30 seconds (well under 60s timeout)
-- **URL uniqueness**: Appends `?batch=N` to avoid Crawlee deduplication
-- **Continuation**: Batch N re-enqueues category URL as batch N+1 with updated `clicks_done` tracking
-
-**Test Command:**
+**Test Commands:**
 ```bash
-python -m scrapers.punto_farma
+# Local testing - Phase 1 (collect URLs)
+python -m scrapers.punto_farma phase1
+
+# Local testing - Phase 2 (scrape products)
+python -m scrapers.punto_farma phase2
+
+# Apify deployment - Use dropdown to select phase
 ```
 
 **Expected Products**: ~6,240 (Medicamentos: 440 pages × 12 = 5,280 + Nutrición: 80 pages × 12 = 960)
 
-**How Batching Works:**
-1. **Batch 1**: Load page → Click 20× → Extract 240 products → Enqueue `?batch=2`
-2. **Batch 2**: Fresh page load → Click 20× more → Extract next 240 → Enqueue `?batch=3`
-3. **Continue**: Until button disappears or 600 clicks reached
-4. **Benefits**: No memory accumulation, no timeout, tracks progress via batch number
+**Running on Apify:**
+1. **Phase 1**: Select `{"pharmacy": "punto_farma", "punto_farma_phase": "phase1"}` → Collects all URLs
+2. **Phase 2**: Select `{"pharmacy": "punto_farma", "punto_farma_phase": "phase2"}` → Scrapes all collected URLs
+3. **Parallel execution**: Can run Phase 1 continuously while running Phase 2 on already-collected URLs
+4. **Re-running Phase 2**: Safe to run multiple times (upserts existing products with fresh data)
+
+**Database Tables:**
+- `product_urls`: Stores all collected URLs (unique constraint on `pharmacy_source, product_url`)
+- `products`: Stores scraped product data (upserted based on `pharmacy_source, site_code`)
 
 ---
 
