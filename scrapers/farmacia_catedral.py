@@ -1,8 +1,14 @@
-"""Farmacia Catedral scraper for pharmaceutical products."""
+"""Farmacia Catedral scraper for pharmaceutical products - 2-PHASE APPROACH.
+
+Phase 1: Scroll and save all product URLs to database
+Phase 2: Scrape each URL from database
+"""
 
 import asyncio
 import json
 import re
+import sys
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from crawlee import Request
 from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
@@ -274,10 +280,103 @@ class FarmaciaCatedralProduct:
             return None
 
 
-@router.default_handler
-async def handle_product_page(context: PlaywrightCrawlingContext) -> None:
-    """Handle product detail pages."""
-    logger.info(f"Processing product page: {context.request.url}")
+# ==============================================================================
+# PHASE 1: URL COLLECTION
+# ==============================================================================
+
+@router.handler("url_collection")
+async def collect_urls(context: PlaywrightCrawlingContext) -> None:
+    """Phase 1: Scroll and save all product URLs to database."""
+    logger.info(f"Collecting URLs from: {context.request.url}")
+
+    try:
+        # Wait for product grid to load
+        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
+        await context.page.wait_for_timeout(1000)
+
+        # Lazy scroll to load all products (4-5K expected)
+        logger.info("Starting lazy scroll to load all products (4-5K expected)...")
+
+        base_url = PHARMACY_URLS["farmacia_catedral"]["base_url"]
+        previous_height = 0
+        scroll_attempts = 0
+        no_change_count = 0
+        max_scroll_attempts = 1000  # Increased for 4-5K products
+        max_no_change = 15  # Wait for 15 consecutive scrolls with no change (15 * 3sec = 45sec patience)
+        seen_urls = set()  # Track URLs we've already processed
+
+        while scroll_attempts < max_scroll_attempts:
+            # Extract product links from current view and save immediately
+            product_links = await context.page.locator("a[href*='/producto/']").all()
+
+            urls_to_insert = []
+            for link in product_links:
+                href = await link.get_attribute("href")
+                if href:
+                    # Convert to absolute URL if needed
+                    if not href.startswith("http"):
+                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+
+                    # Skip if already seen
+                    if href in seen_urls:
+                        continue
+                    seen_urls.add(href)
+
+                    # Extract site_code from URL: /producto/66/...
+                    site_code = None
+                    url_match = re.search(r"/producto/(\d+)/", href)
+                    if url_match:
+                        site_code = url_match.group(1)
+
+                    urls_to_insert.append({
+                        "pharmacy_source": "farmacia_catedral",
+                        "product_url": href,
+                        "site_code": site_code,
+                    })
+
+            # Save new URLs to database
+            global db_loader_instance
+            if db_loader_instance and urls_to_insert:
+                inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                logger.info(f"Scroll {scroll_attempts + 1}: Found {len(urls_to_insert)} new URLs, saved {inserted}")
+
+            # Scroll to bottom
+            await context.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await context.page.wait_for_timeout(3000)  # 3 seconds delay for slow page loading
+
+            # Get new scroll height
+            current_height = await context.page.evaluate("document.body.scrollHeight")
+
+            # Check if we've reached the bottom
+            if current_height == previous_height:
+                no_change_count += 1
+                logger.debug(f"No height change ({no_change_count}/{max_no_change})")
+                if no_change_count >= max_no_change:
+                    logger.info(f"Reached bottom after {scroll_attempts} scrolls")
+                    break
+            else:
+                no_change_count = 0
+
+            previous_height = current_height
+            scroll_attempts += 1
+
+            if scroll_attempts % 10 == 0:
+                logger.info(f"Progress: {len(seen_urls)} total unique URLs collected so far")
+
+        logger.info(f"Finished: {scroll_attempts} scrolls, {len(seen_urls)} total unique URLs collected")
+
+    except Exception as e:
+        logger.error(f"Error collecting URLs from {context.request.url}: {e}")
+
+
+# ==============================================================================
+# PHASE 2: PRODUCT SCRAPING
+# ==============================================================================
+
+@router.handler("product_detail")
+async def scrape_product(context: PlaywrightCrawlingContext) -> None:
+    """Phase 2: Scrape product detail page and UPDATE database record."""
+    logger.info(f"Scraping product: {context.request.url}")
 
     try:
         # Wait for product name to load
@@ -291,90 +390,33 @@ async def handle_product_page(context: PlaywrightCrawlingContext) -> None:
         product_data = FarmaciaCatedralProduct.extract_from_html(html, context.request.url)
 
         if product_data:
-            # Save to dataset (Crawlee built-in storage)
-            await context.push_data(product_data)
-
-            # Save to Supabase immediately
+            # Update database record (upsert based on pharmacy_source + product_url)
             global db_loader_instance
             if db_loader_instance:
                 product_id = await db_loader_instance.upsert_product(product_data)
                 if product_id:
-                    logger.info(f"Saved to Supabase: {product_data['product_name']}")
+                    logger.info(f"Saved: {product_data['product_name']}")
                 else:
-                    logger.warning(f"Failed to save to Supabase: {product_data['product_name']}")
+                    logger.warning(f"Failed to save: {product_data['product_name']}")
             else:
-                logger.info(f"Saved to local dataset: {product_data['product_name']}")
+                logger.info(f"No DB loader: {product_data['product_name']}")
         else:
             logger.warning(f"Failed to extract product from {context.request.url}")
 
     except Exception as e:
-        logger.error(f"Error processing product page {context.request.url}: {e}")
+        logger.error(f"Error scraping product {context.request.url}: {e}")
 
 
-@router.handler("category_listing")
-async def handle_category_listing(context: PlaywrightCrawlingContext) -> None:
-    """Handle category listing pages with lazy scrolling."""
-    logger.info(f"Processing category listing: {context.request.url}")
+# ==============================================================================
+# MAIN
+# ==============================================================================
 
-    try:
-        # Wait for product grid to load
-        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
+async def main(phase: str = None) -> None:
+    """Run Farmacia Catedral scraper.
 
-        # Lazy scroll to load all products
-        logger.info("Starting lazy scroll to load all products...")
-
-        previous_height = 0
-        scroll_attempts = 0
-        max_scroll_attempts = 500  # Allow more scrolls to get all products
-
-        while scroll_attempts < max_scroll_attempts:
-            # Scroll to bottom
-            await context.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await context.page.wait_for_timeout(2000)  # Wait for lazy load
-
-            # Get new scroll height
-            current_height = await context.page.evaluate("document.body.scrollHeight")
-
-            # Check if we've reached the bottom (no new content loaded)
-            if current_height == previous_height:
-                logger.info(f"Reached bottom of page after {scroll_attempts} scrolls")
-                break
-
-            previous_height = current_height
-            scroll_attempts += 1
-
-            if scroll_attempts % 5 == 0:
-                logger.info(f"Scroll attempt {scroll_attempts}/{max_scroll_attempts}...")
-
-        # Extract all product links
-        product_links = await context.page.locator("a[href*='/producto/']").all()
-        logger.info(f"Found {len(product_links)} product links after lazy loading")
-
-        # Enqueue each product link
-        base_url = PHARMACY_URLS["farmacia_catedral"]["base_url"]
-        enqueued_urls = set()
-
-        for link in product_links:
-            href = await link.get_attribute("href")
-            if href:
-                # Convert relative URLs to absolute
-                if not href.startswith("http"):
-                    href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
-
-                # Avoid duplicates
-                if href not in enqueued_urls:
-                    await context.add_requests([Request.from_url(href, label="default")])
-                    enqueued_urls.add(href)
-                    logger.debug(f"Enqueued product: {href}")
-
-        logger.info(f"Enqueued {len(enqueued_urls)} unique product URLs")
-
-    except Exception as e:
-        logger.error(f"Error processing category listing {context.request.url}: {e}")
-
-
-async def main() -> None:
-    """Run Farmacia Catedral scraper."""
+    Args:
+        phase: Scraping phase ("phase1" or "phase2"). If None, determined from CLI args or defaults to "phase1".
+    """
     global db_loader_instance
 
     settings = get_settings()
@@ -382,7 +424,7 @@ async def main() -> None:
 
     # Initialize Supabase loader
     db_loader = SupabaseLoader()
-    db_loader_instance = db_loader  # Set global instance for handlers
+    db_loader_instance = db_loader
 
     # Configure proxy rotation (if proxies provided)
     proxy_configuration = None
@@ -396,47 +438,107 @@ async def main() -> None:
     else:
         logger.info("No proxies configured - using direct connection")
 
-    # Start scraping run
-    run_id = await db_loader.start_scraping_run("farmacia_catedral", "medicamentos+suplementos")
+    # Determine phase: 1) Function parameter, 2) CLI arg, 3) Default to phase1
+    if phase is None:
+        if len(sys.argv) > 1:
+            phase = sys.argv[1]
+        else:
+            phase = "phase1"
 
-    try:
-        # Create crawler with anti-detection measures
-        crawler = PlaywrightCrawler(
-            request_handler=router,
-            proxy_configuration=proxy_configuration,
-            max_requests_per_crawl=settings.max_requests_per_crawl,
-            max_request_retries=2,
-            headless=True,
-        )
+    if phase == "phase1":
+        # ============================================================
+        # PHASE 1: COLLECT ALL PRODUCT URLS
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 1: Collecting product URLs from medicamentos category")
+        logger.info("=" * 80)
 
-        # Start URLs (category pages)
-        start_urls = [
-            f"{base_url}/categoria/1/medicamentos?marcas=&categorias=&categorias_top=",
-            f"{base_url}/categoria/35/suplemento-vitaminico-y-mineral?marcas=&categorias=&categorias_top=",
-        ]
+        run_id = await db_loader.start_scraping_run("farmacia_catedral_urls", "medicamentos")
 
-        logger.info(f"Starting Farmacia Catedral scraper")
-        logger.info(f"Strategy: Lazy scroll category pages, then scrape all products")
+        try:
+            crawler = PlaywrightCrawler(
+                request_handler=router,
+                proxy_configuration=proxy_configuration,
+                max_requests_per_crawl=10,  # Just 1 category page
+                max_request_retries=2,
+                request_handler_timeout=timedelta(hours=2),  # 2 hours for scrolling through all products
+                headless=True,
+            )
 
-        # Enqueue start URLs as category listings
-        await crawler.run([
-            Request.from_url(url, label="category_listing") for url in start_urls
-        ])
+            # FIXED URL: Use correct medicamentos category page
+            start_url = f"{base_url}/categoria/1/medicamentos?marcas=&categorias=&categorias_top=1"
+            logger.info(f"Starting URL collection from: {start_url}")
 
-        # Get final count from Crawlee storage
-        dataset = await crawler.get_dataset()
-        data = await dataset.get_data()
+            await crawler.run([Request.from_url(start_url, label="url_collection")])
 
-        total_scraped = len(data.items)
-        logger.info(f"Scraping completed: {total_scraped} products scraped and saved to Supabase")
+            await db_loader.complete_scraping_run(run_id, 0, 0)
+            logger.info("=" * 80)
+            logger.info("PHASE 1 COMPLETE!")
+            logger.info("Run Phase 2 to scrape products:")
+            logger.info("  python -m scrapers.farmacia_catedral phase2")
+            logger.info("=" * 80)
 
-        # Complete scraping run
-        await db_loader.complete_scraping_run(run_id, total_scraped, 0)
+        except Exception as e:
+            logger.error(f"Phase 1 failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
 
-    except Exception as e:
-        logger.error(f"Scraping failed: {e}")
-        await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
-        raise
+    elif phase == "phase2":
+        # ============================================================
+        # PHASE 2: SCRAPE PRODUCTS FROM DATABASE URLS
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 2: Scraping products from collected URLs")
+        logger.info("=" * 80)
+
+        # Get URLs to scrape
+        urls_to_scrape = await db_loader.get_urls_to_scrape("farmacia_catedral")
+        logger.info(f"Found {len(urls_to_scrape)} URLs to scrape")
+
+        if not urls_to_scrape:
+            logger.info("No URLs to scrape! Run phase1 first or all products already scraped today.")
+            return
+
+        run_id = await db_loader.start_scraping_run("farmacia_catedral", f"phase2_{len(urls_to_scrape)}_products")
+
+        try:
+            crawler = PlaywrightCrawler(
+                request_handler=router,
+                proxy_configuration=proxy_configuration,
+                max_requests_per_crawl=len(urls_to_scrape) + 100,
+                max_request_retries=2,
+                request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
+                headless=True,
+            )
+
+            # Enqueue all product URLs
+            requests = [
+                Request.from_url(url, label="product_detail") for url in urls_to_scrape
+            ]
+
+            logger.info(f"Starting scraping of {len(requests)} products...")
+
+            await crawler.run(requests)
+
+            # Get final count
+            dataset = await crawler.get_dataset()
+            data = await dataset.get_data()
+            total_scraped = len(data.items)
+
+            logger.info("=" * 80)
+            logger.info(f"PHASE 2 COMPLETE: {total_scraped} products scraped!")
+            logger.info("=" * 80)
+
+            await db_loader.complete_scraping_run(run_id, total_scraped, 0)
+
+        except Exception as e:
+            logger.error(f"Phase 2 failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
+
+    else:
+        logger.error(f"Unknown phase: {phase}. Use 'phase1' or 'phase2'")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
