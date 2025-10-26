@@ -208,90 +208,115 @@ class PuntoFarmaProduct:
 
 
 # ==============================================================================
-# PHASE 1: URL COLLECTION
+# PHASE 1: URL COLLECTION (Using POST API)
 # ==============================================================================
 
-@router.handler("url_collection")
-async def collect_urls(context: PlaywrightCrawlingContext) -> None:
-    """Phase 1: Click and save URLs after EACH page load."""
-    url = context.request.url
-    logger.info(f"Collecting URLs from: {url}")
+async def collect_urls_from_api() -> int:
+    """Phase 1: Fetch product URLs from POST API and save to database.
 
-    try:
-        # Wait for product grid to load
-        await context.page.wait_for_selector("a[href*='/producto/']", timeout=10000)
+    This uses Punto Farma's Next.js Server Action pagination API which is much
+    faster than clicking through pages.
 
-        base_url = PHARMACY_URLS["punto_farma"]["base_url"]
-        max_clicks = 10000  # Safety limit for large catalogs
+    Returns:
+        Number of total URLs saved to database
+    """
+    import httpx
+    import json
 
-        clicks = 0
-        no_button_count = 0
-        seen_urls = set()  # Track URLs we've already processed
+    base_url = "https://www.puntofarma.com.py"
+    api_url = f"{base_url}/categoria/1/medicamentos"
 
-        logger.info("Starting URL collection...")
+    # Headers required for Next.js Server Action
+    headers = {
+        "accept": "text/x-component",
+        "content-type": "text/plain;charset=UTF-8",
+        "next-action": "48e9f2eca478537e00a58539a9f9edcf2e1dff77",
+        "next-router-state-tree": "%5B%22%22%2C%7B%22children%22%3A%5B%22categoria%22%2C%7B%22children%22%3A%5B%221%22%2C%7B%22children%22%3A%5B%22medicamentos%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D",
+        "origin": base_url,
+        "referer": api_url,
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
 
-        while clicks < max_clicks:
-            # Extract current page URLs
-            product_links = await context.page.locator("a[href*='/producto/']").all()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Get first page to determine total products and pages
+        payload = '["/productos/categoria/1?p=1&orderBy=destacado&descuento="]'
+        response = await client.post(api_url, headers=headers, content=payload)
 
-            urls_to_insert = []
-            for link in product_links:
-                href = await link.get_attribute("href")
-                if href:
-                    if not href.startswith("http"):
-                        href = f"{base_url}{href}" if href.startswith("/") else f"{base_url}/{href}"
+        # Parse Next.js Server Component response (format: "1:{json_data}")
+        match = re.search(r'1:(\{"ok".*\})', response.text)
+        if not match:
+            logger.error("Failed to parse API response format")
+            return 0
 
-                    # Skip if already seen (deduplicates within page and across pages)
-                    if href in seen_urls:
+        data = json.loads(match.group(1))
+        total_products = data.get("total", 0)
+        results_per_page = len(data.get("results", []))
+
+        if results_per_page == 0:
+            logger.error("No products found in first page")
+            return 0
+
+        total_pages = (total_products + results_per_page - 1) // results_per_page
+
+        logger.info(f"Found {total_products} total products across {total_pages} pages")
+
+        seen_urls = set()
+
+        # Loop through all pages
+        for page in range(1, total_pages + 1):
+            payload = f'["/productos/categoria/1?p={page}&orderBy=destacado&descuento="]'
+
+            try:
+                response = await client.post(api_url, headers=headers, content=payload)
+
+                # Parse response
+                match = re.search(r'1:(\{"ok".*\})', response.text)
+                if not match:
+                    logger.warning(f"Failed to parse page {page}")
+                    continue
+
+                page_data = json.loads(match.group(1))
+                products = page_data.get("results", [])
+
+                urls_to_insert = []
+                for product in products:
+                    codigo = product.get("codigo")  # Site code
+                    descripcion = product.get("descripcion", "")
+                    codigoBarra = product.get("codigoBarra")  # Barcode
+
+                    if not codigo:
                         continue
-                    seen_urls.add(href)
 
-                    site_code = None
-                    url_match = re.search(r"/producto/(\d+)/", href)
-                    if url_match:
-                        site_code = url_match.group(1)
+                    # Build product URL (Punto Farma format: /producto/{codigo}/{slug})
+                    slug = descripcion.lower().replace(' ', '-')
+                    slug = re.sub(r'[^a-z0-9-]', '', slug)  # Remove special chars
+                    slug = re.sub(r'-+', '-', slug)  # Replace multiple dashes
+                    product_url = f"{base_url}/producto/{codigo}/{slug}"
+
+                    if product_url in seen_urls:
+                        continue
+                    seen_urls.add(product_url)
 
                     urls_to_insert.append({
                         "pharmacy_source": "punto_farma",
-                        "product_url": href,
-                        "site_code": site_code,
+                        "product_url": product_url,
+                        "site_code": str(codigo),
                     })
 
-            # Save new URLs to database
-            global db_loader_instance
-            if db_loader_instance and urls_to_insert:
-                inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
-                logger.info(f"Page {clicks + 1}: Found {len(urls_to_insert)} new URLs, saved {inserted}")
+                # Save to database
+                global db_loader_instance
+                if db_loader_instance and urls_to_insert:
+                    inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                    logger.info(f"Page {page}/{total_pages}: Saved {inserted} URLs")
 
-            # Click "Cargar más"
-            load_more_button = context.page.locator("button.btn.btn-primary:has-text('Cargar más')").first
+                await asyncio.sleep(0.1)  # Small delay between requests
 
-            try:
-                button_visible = await load_more_button.is_visible()
-            except:
-                no_button_count += 1
-                if no_button_count >= 3:
-                    logger.info(f"Button check failed after {clicks} clicks, finishing")
-                    break
-                await context.page.wait_for_timeout(500)
+            except Exception as e:
+                logger.error(f"Error fetching page {page}: {e}")
                 continue
 
-            if button_visible:
-                no_button_count = 0
-                await load_more_button.click()
-                clicks += 1
-                await context.page.wait_for_timeout(500)  # Increased from 300ms to 500ms
-            else:
-                no_button_count += 1
-                if no_button_count >= 3:
-                    logger.info(f"No more 'Cargar más' button after {clicks} clicks")
-                    break
-                await context.page.wait_for_timeout(500)
-
-        logger.info(f"Finished: {clicks} clicks, {len(seen_urls)} total unique URLs collected")
-
-    except Exception as e:
-        logger.error(f"Error collecting URLs from {url}: {e}")
+        logger.info(f"Finished: {len(seen_urls)} total unique URLs collected")
+        return len(seen_urls)
 
 
 # ==============================================================================
@@ -372,38 +397,21 @@ async def main(phase: str = None) -> None:
 
     if phase == "phase1":
         # ============================================================
-        # PHASE 1: COLLECT ALL PRODUCT URLS
+        # PHASE 1: COLLECT ALL PRODUCT URLS (Using POST API)
         # ============================================================
         logger.info("=" * 80)
-        logger.info("PHASE 1: Collecting product URLs from all pages")
+        logger.info("PHASE 1: Collecting product URLs using POST API")
         logger.info("=" * 80)
 
-        run_id = await db_loader.start_scraping_run("punto_farma_urls", "medicamentos+nutricion")
+        run_id = await db_loader.start_scraping_run("punto_farma_urls", "medicamentos_api")
 
         try:
-            crawler = PlaywrightCrawler(
-                request_handler=router,
-                proxy_configuration=proxy_configuration,
-                max_requests_per_crawl=10,  # Just 2 category pages (not product pages)
-                max_request_retries=2,
-                request_handler_timeout=timedelta(hours=4),  # 4 hours for clicking through all pages
-                headless=True,
-            )
-
-            start_urls = [
-                f"{base_url}/categoria/1/medicamentos",
-                f"{base_url}/categoria/238/nutricion-y-deporte",
-            ]
-
-            logger.info(f"Starting URL collection from: {start_urls}")
-
-            await crawler.run([
-                Request.from_url(url, label="url_collection") for url in start_urls
-            ])
+            # Call the API-based URL collection function
+            total_urls = await collect_urls_from_api()
 
             await db_loader.complete_scraping_run(run_id, 0, 0)
             logger.info("=" * 80)
-            logger.info("PHASE 1 COMPLETE!")
+            logger.info(f"PHASE 1 COMPLETE! Collected {total_urls} product URLs")
             logger.info("Run Phase 2 to scrape products:")
             logger.info("  python -m scrapers.punto_farma phase2")
             logger.info("=" * 80)
