@@ -127,6 +127,57 @@ class SupabaseLoader:
             logger.error(f"Error inserting product URLs: {e}")
             return 0
 
+    async def insert_barcode_snapshot(self, product_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Insert a daily snapshot for barcode tracking campaign.
+        Captures price data even if unchanged (unlike price_history).
+
+        Args:
+            product_data: Dictionary with product information
+
+        Returns:
+            Snapshot ID if successful, None otherwise
+        """
+        try:
+            snapshot_data = {
+                "product_id": product_data.get("id"),  # Product ID from products table
+                "pharmacy_source": product_data.get("pharmacy_source"),
+                "site_code": product_data.get("site_code"),
+                "barcode": product_data.get("barcode"),
+                "product_name": product_data.get("product_name"),
+                "brand": product_data.get("brand"),
+                "product_url": product_data.get("product_url"),
+                "current_price": product_data.get("current_price"),
+                "original_price": product_data.get("original_price"),
+                "discount_percentage": product_data.get("discount_percentage"),
+                "discount_amount": product_data.get("discount_amount"),
+                "bank_discount_price": product_data.get("bank_discount_price"),
+                "bank_discount_bank": product_data.get("bank_discount_bank"),
+                "in_stock": product_data.get("in_stock"),
+                "requires_prescription": product_data.get("requires_prescription"),
+                "scraped_at": product_data.get("scraped_at", datetime.utcnow().isoformat()),
+                "snapshot_date": datetime.utcnow().date().isoformat(),
+            }
+
+            # Upsert: one snapshot per product per day
+            result = (
+                self.client.table("barcode_tracking_snapshots")
+                .upsert(snapshot_data, on_conflict="pharmacy_source,barcode,snapshot_date")
+                .execute()
+            )
+
+            if result.data:
+                snapshot_id = result.data[0].get("id")
+                logger.debug(f"Inserted snapshot for {product_data.get('product_name')}")
+                return snapshot_id
+            else:
+                logger.warning(f"No data returned for snapshot insert")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error inserting snapshot for {product_data.get('product_name')}: {e}")
+            return None
+
     async def get_urls_to_scrape(self, pharmacy_source: str, category: Optional[str] = None) -> list[str]:
         """
         Get product URLs that need scraping from product_urls table.

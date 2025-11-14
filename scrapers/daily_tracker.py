@@ -124,7 +124,13 @@ async def scrape_farma_oliva(context: PlaywrightCrawlingContext, loader: Supabas
             "original_price": original_price,
         }
 
-        await loader.upsert_product(product_data)
+        product_id = await loader.upsert_product(product_data)
+
+        # Insert daily snapshot for tracking campaign
+        if product_id:
+            product_data["id"] = product_id
+            await loader.insert_barcode_snapshot(product_data)
+
         logger.info(f"✓ {product_name} - ₲{current_price:,.0f}" if current_price else f"✓ {product_name}")
 
     except Exception as e:
@@ -190,7 +196,13 @@ async def scrape_punto_farma(context: PlaywrightCrawlingContext, loader: Supabas
             "original_price": original_price,
         }
 
-        await loader.upsert_product(product_data)
+        product_id = await loader.upsert_product(product_data)
+
+        # Insert daily snapshot for tracking campaign
+        if product_id:
+            product_data["id"] = product_id
+            await loader.insert_barcode_snapshot(product_data)
+
         logger.info(f"✓ {product_name} - ₲{current_price:,.0f}" if current_price else f"✓ {product_name}")
 
     except Exception as e:
@@ -266,7 +278,13 @@ async def scrape_farmacia_center(context: PlaywrightCrawlingContext, loader: Sup
             "original_price": original_price,
         }
 
-        await loader.upsert_product(product_data)
+        product_id = await loader.upsert_product(product_data)
+
+        # Insert daily snapshot for tracking campaign
+        if product_id:
+            product_data["id"] = product_id
+            await loader.insert_barcode_snapshot(product_data)
+
         logger.info(f"✓ {product_name} - ₲{current_price:,.0f}" if current_price else f"✓ {product_name}")
 
     except Exception as e:
@@ -329,7 +347,13 @@ async def scrape_farmacia_catedral(context: PlaywrightCrawlingContext, loader: S
                 except:
                     pass
 
-        await loader.upsert_product(product_data)
+        product_id = await loader.upsert_product(product_data)
+
+        # Insert daily snapshot for tracking campaign
+        if product_id:
+            product_data["id"] = product_id
+            await loader.insert_barcode_snapshot(product_data)
+
         name = product_data.get("product_name")
         price = product_data.get("current_price")
         logger.info(f"✓ {name} - ₲{price:,.0f}" if price else f"✓ {name}")
@@ -374,11 +398,11 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
         product_info = product_lookup.get(url, {})
         await handler(context, loader, product_info)
 
-    # Configure crawler - use lower concurrency for GitHub Actions
+    # Configure crawler - use only 1 browser for GitHub Actions stability
     concurrency_settings = ConcurrencySettings(
-        max_concurrency=3,  # Lower for GitHub Actions (limited resources)
+        max_concurrency=1,  # Single browser for GitHub Actions (prevents crashes)
         min_concurrency=1,
-        desired_concurrency=3,
+        desired_concurrency=1,
     )
 
     crawler = PlaywrightCrawler(
@@ -399,6 +423,8 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
 
 async def main():
     """Main entry point for daily tracker."""
+    import os
+
     start_time = datetime.now()
     logger.info(f"\n{'='*60}")
     logger.info(f"DAILY BARCODE TRACKER - {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -413,6 +439,16 @@ async def main():
         logger.warning("No URLs in barcode_tracking_urls table!")
         logger.info("Run scripts/populate_tracking_urls.py first to populate URLs")
         return
+
+    # Check if filtering by pharmacy (for parallel GitHub Actions jobs)
+    pharmacy_filter = os.getenv("PHARMACY_FILTER")
+    if pharmacy_filter:
+        logger.info(f"Filtering to pharmacy: {pharmacy_filter}")
+        if pharmacy_filter in urls_by_pharmacy:
+            urls_by_pharmacy = {pharmacy_filter: urls_by_pharmacy[pharmacy_filter]}
+        else:
+            logger.warning(f"No URLs found for {pharmacy_filter}")
+            return
 
     # Scrape each pharmacy
     for pharmacy, urls_list in urls_by_pharmacy.items():

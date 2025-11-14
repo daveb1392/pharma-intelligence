@@ -7,9 +7,9 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  track-barcodes:
+  track-farma-oliva:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours for 859 products with low concurrency
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -26,14 +26,15 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Playwright browsers with system dependencies
+      - name: Install Playwright browsers
         run: |
           playwright install --with-deps chromium
 
-      - name: Run daily barcode tracker
+      - name: Run Farma Oliva tracker
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PHARMACY_FILTER: farma_oliva
         run: |
           python -m scrapers.daily_tracker
 
@@ -41,7 +42,130 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: scraper-logs
+          name: farma-oliva-logs
+          path: |
+            *.log
+            storage/*.log
+          retention-days: 7
+
+  track-punto-farma:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install --with-deps chromium
+
+      - name: Run Punto Farma tracker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PHARMACY_FILTER: punto_farma
+        run: |
+          python -m scrapers.daily_tracker
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: punto-farma-logs
+          path: |
+            *.log
+            storage/*.log
+          retention-days: 7
+
+  track-farmacia-center:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install --with-deps chromium
+
+      - name: Run Farmacia Center tracker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PHARMACY_FILTER: farma_center
+        run: |
+          python -m scrapers.daily_tracker
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farmacia-center-logs
+          path: |
+            *.log
+            storage/*.log
+          retention-days: 7
+
+  track-farmacia-catedral:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install --with-deps chromium
+
+      - name: Run Farmacia Catedral tracker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PHARMACY_FILTER: farmacia_catedral
+        run: |
+          python -m scrapers.daily_tracker
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farmacia-catedral-logs
           path: |
             *.log
             storage/*.log

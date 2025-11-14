@@ -72,12 +72,22 @@ scrapers/           # Crawler implementations for each pharmacy
   ├── farma_oliva.py       # Traditional pagination scraper
   ├── punto_farma.py       # 2-phase: POST API → Playwright
   ├── farmacia_center.py   # 2-phase: Paginated HTML API → Playwright
-  └── farmacia_catedral.py # 2-phase: JSON API → Playwright
+  ├── farmacia_catedral.py # 2-phase: JSON API → Playwright
+  └── daily_tracker.py     # Targeted barcode tracking scraper
+scripts/            # Utility scripts
+  ├── populate_tracking_urls.py  # Populate barcode tracking URLs
+  └── test_tracker.py            # Validate tracking setup
 storage/            # Supabase loader and database interactions
   └── supabase_loader.py   # Product upserts, URL tracking, price history
 utils/              # Config and logging utilities
 tests/              # Test suite
-docs/               # Crawlee documentation (reference material)
+docs/               # Documentation
+  ├── DAILY_TRACKER.md     # Barcode tracking system guide
+  └── (other docs)         # Crawlee reference material
+sql/                # Database migrations
+  └── create_barcode_tracking_table.sql  # Tracking table schema
+.github/workflows/  # GitHub Actions (NOTE: not suitable for Playwright)
+  └── daily-barcode-tracker.yml  # Daily tracker workflow (use locally instead)
 main.py             # Apify Actor entry point (legacy, no longer used)
 ```
 
@@ -111,6 +121,7 @@ All multi-page pharmacies use a 2-phase approach for reliability and performance
 **Database Schema:**
 - **`products` table**: All product data (upserted on `pharmacy_source, site_code`)
 - **`product_urls` table**: URL tracking for 2-phase scrapers (unique on `pharmacy_source, product_url`)
+- **`barcode_tracking_urls` table**: Separate table for targeted barcode tracking campaigns (isolated from main scraping)
 - **`price_history` table**: Automatic price change tracking via Postgres trigger
 - **`scraping_runs` table**: Job metadata and stats
 
@@ -350,6 +361,121 @@ python -m scrapers.farmacia_catedral phase2
 
 ---
 
+### 5. Daily Barcode Tracker (COMPLETED)
+**Files**:
+- `scrapers/daily_tracker.py` (main scraper)
+- `scripts/populate_tracking_urls.py` (one-time setup)
+- `scripts/test_tracker.py` (validation)
+- `sql/create_barcode_tracking_table.sql` (database schema)
+- `.github/workflows/daily-barcode-tracker.yml` (GitHub Actions - NOT RECOMMENDED)
+- `docs/DAILY_TRACKER.md` (complete documentation)
+
+**Strategy**: Targeted product tracking for short-term campaigns (3-7 days)
+
+**Purpose**: Monitor specific products by barcode without running full scrapers. Perfect for:
+- Client-specific product monitoring
+- Daily price tracking over short periods
+- Quick competitive analysis
+- A/B testing price changes
+
+**Architecture**: 2-step process with separate tracking table
+
+**Step 1: Populate Tracking URLs (One-time setup)**
+```bash
+# Edit TARGET_BARCODES list in scripts/populate_tracking_urls.py, then:
+python scripts/populate_tracking_urls.py
+```
+- Queries `products` table for products with target barcodes
+- Inserts URLs into `barcode_tracking_urls` table
+- Only needs to run once (or when adding new barcodes)
+- **Tested with 315 barcodes**: Found 859 URLs (100% coverage)
+  - Farma Oliva: 219 URLs
+  - Punto Farma: 192 URLs
+  - Farmacia Center: 202 URLs
+  - Farmacia Catedral: 246 URLs
+
+**Step 2: Daily Scraping**
+```bash
+# All pharmacies
+python -m scrapers.daily_tracker
+
+# Single pharmacy (for parallel execution)
+PHARMACY_FILTER=farma_oliva python -m scrapers.daily_tracker
+PHARMACY_FILTER=punto_farma python -m scrapers.daily_tracker
+PHARMACY_FILTER=farmacia_center python -m scrapers.daily_tracker
+PHARMACY_FILTER=farmacia_catedral python -m scrapers.daily_tracker
+```
+- Queries `barcode_tracking_urls` table for all URLs
+- Scrapes only those URLs (typically 50-300 products per pharmacy)
+- Updates `products` table
+- Price changes auto-tracked by database trigger → `price_history` table
+
+**Features:**
+- ✅ Separate `barcode_tracking_urls` table (isolated from main scraping)
+- ✅ Reuses existing pharmacy handlers (no duplicate code)
+- ✅ Supports `PHARMACY_FILTER` env var for parallel execution
+- ✅ Low concurrency settings optimized for stability (1 browser for GitHub Actions, 10 for local/droplet)
+- ✅ Real-time Supabase saving
+- ✅ Automatic price history tracking
+
+**Database Schema:**
+```sql
+CREATE TABLE barcode_tracking_urls (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    pharmacy_source TEXT NOT NULL,
+    product_url TEXT NOT NULL,
+    site_code TEXT,
+    barcode TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(pharmacy_source, product_url)
+);
+```
+
+**Performance:**
+- 50 products: ~2-3 minutes
+- 100 products: ~5 minutes
+- 300 products: ~10-15 minutes
+- 859 products (all 4 pharmacies): ~25-30 minutes
+
+**GitHub Actions Limitations:**
+⚠️ **GitHub Actions NOT RECOMMENDED for Playwright scrapers**
+- Free tier runners have insufficient RAM for Playwright browsers
+- Persistent crashes even with concurrency=1
+- Error: "Target page, context or browser has been closed"
+- **Solution**: Run locally or on DigitalOcean droplet instead
+
+**Local/Droplet Execution (RECOMMENDED):**
+```bash
+# Test setup
+python scripts/test_tracker.py
+
+# Run daily tracker
+python -m scrapers.daily_tracker
+
+# Or run pharmacies in parallel
+PHARMACY_FILTER=farma_oliva python -m scrapers.daily_tracker &
+PHARMACY_FILTER=punto_farma python -m scrapers.daily_tracker &
+PHARMACY_FILTER=farmacia_center python -m scrapers.daily_tracker &
+PHARMACY_FILTER=farmacia_catedral python -m scrapers.daily_tracker &
+wait
+```
+
+**Cleanup After Campaign:**
+```python
+from storage.supabase_loader import SupabaseLoader
+loader = SupabaseLoader()
+
+# Clear all tracking URLs
+loader.client.table("barcode_tracking_urls").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+
+# Or drop the table entirely
+# DROP TABLE barcode_tracking_urls;
+```
+
+**See `docs/DAILY_TRACKER.md` for complete documentation.**
+
+---
+
 ## Storage Module (COMPLETED)
 **File**: `storage/supabase_loader.py`
 
@@ -364,6 +490,7 @@ python -m scrapers.farmacia_catedral phase2
 **Database Tables:**
 - `products`: All scraped product data (upserted)
 - `product_urls`: URL tracking for 2-phase scrapers (unique constraint)
+- `barcode_tracking_urls`: Targeted barcode tracking campaigns (separate table)
 - `price_history`: Automatic price change tracking (Postgres trigger)
 - `scraping_runs`: Job metadata and stats
 
@@ -426,7 +553,7 @@ $$ LANGUAGE plpgsql;
 pip install -r requirements.txt
 playwright install chromium
 
-# Run individual scrapers
+# Run full scrapers (complete catalog)
 python -m scrapers.farma_oliva
 python -m scrapers.punto_farma phase1      # URL collection
 python -m scrapers.punto_farma phase2      # Product scraping
@@ -434,6 +561,14 @@ python -m scrapers.farmacia_center phase1
 python -m scrapers.farmacia_center phase2
 python -m scrapers.farmacia_catedral phase1
 python -m scrapers.farmacia_catedral phase2
+
+# Run targeted barcode tracker (specific products only)
+python scripts/populate_tracking_urls.py   # One-time setup
+python scripts/test_tracker.py             # Validate setup
+python -m scrapers.daily_tracker           # Scrape tracked products
+
+# Filter to single pharmacy
+PHARMACY_FILTER=farma_oliva python -m scrapers.daily_tracker
 ```
 
 ## Testing & Validation
@@ -443,13 +578,17 @@ python -m scrapers.farmacia_catedral phase2
 from storage.supabase_loader import SupabaseLoader
 loader = SupabaseLoader()
 
-# Check URLs collected
+# Check URLs collected (full scrapers)
 urls = await loader.get_urls_to_scrape('punto_farma')
 print(f'URLs to scrape: {len(urls)}')
 
 # Check products scraped
 result = loader.client.table('products').select('id').eq('pharmacy_source', 'punto_farma').execute()
 print(f'Products scraped: {len(result.data)}')
+
+# Check tracking URLs (barcode tracker)
+result = loader.client.table('barcode_tracking_urls').select('*').execute()
+print(f'Tracking {len(result.data)} URLs')
 ```
 
 **Validate data quality:**
@@ -462,6 +601,17 @@ SELECT pharmacy_source, COUNT(*) FROM products WHERE barcode IS NULL GROUP BY ph
 
 -- Check price history
 SELECT * FROM price_history ORDER BY changed_at DESC LIMIT 10;
+
+-- View tracked products and their latest prices
+SELECT
+  t.pharmacy_source,
+  p.product_name,
+  p.barcode,
+  p.current_price,
+  p.scraped_at
+FROM barcode_tracking_urls t
+JOIN products p ON t.pharmacy_source = p.pharmacy_source AND t.site_code = p.site_code
+ORDER BY p.scraped_at DESC;
 ```
 
 ## Troubleshooting
@@ -480,6 +630,20 @@ SELECT * FROM price_history ORDER BY changed_at DESC LIMIT 10;
 **Issue**: Browser crashes or timeouts
 **Solution**: Increase timeout: `request_handler_timeout=timedelta(seconds=60)`
 
+### GitHub Actions Browser Crashes
+**Issue**: "Target page, context or browser has been closed" errors in GitHub Actions
+**Cause**: GitHub Actions free tier runners have insufficient RAM for Playwright browsers
+**Solution**: Run scrapers locally or on DigitalOcean droplet instead. GitHub Actions is not suitable for Playwright-based scraping.
+
+### "No URLs in barcode_tracking_urls table"
+**Issue**: Daily tracker reports no URLs to scrape
+**Solution**: Run `python scripts/populate_tracking_urls.py` first to populate tracking URLs from products table
+
+### Products Not Found in Tracking Setup
+**Issue**: `populate_tracking_urls.py` finds 0 products for target barcodes
+**Cause**: Products may not exist in database yet
+**Solution**: Run full pharmacy scrapers first (Phase 1 + Phase 2) to populate products table, then run populate script
+
 ---
 
 ## Important Notes
@@ -489,6 +653,8 @@ SELECT * FROM price_history ORDER BY changed_at DESC LIMIT 10;
 - **Monitor website changes** - Pharmacy sites may change structure, breaking scrapers
 - **Run Phase 1 daily** - Always collect fresh URLs before Phase 2
 - **Price history is automatic** - Database trigger handles it, no code needed
+- **GitHub Actions unsuitable for Playwright** - Free tier lacks RAM for browsers; use local/droplet execution
+- **Barcode tracking is temporary** - `barcode_tracking_urls` table can be dropped after campaign ends
 
 ## Reference Documentation
 
