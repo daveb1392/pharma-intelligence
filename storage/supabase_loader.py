@@ -127,27 +127,34 @@ class SupabaseLoader:
             logger.error(f"Error inserting product URLs: {e}")
             return 0
 
-    async def get_urls_to_scrape(self, pharmacy_source: str) -> list[str]:
+    async def get_urls_to_scrape(self, pharmacy_source: str, category: Optional[str] = None) -> list[str]:
         """
         Get product URLs that need scraping from product_urls table.
 
         Args:
             pharmacy_source: Pharmacy source to filter by
+            category: Optional category to filter by (e.g., "medicamentos", "nutricion-y-deporte")
 
         Returns:
             List of product URLs to scrape
         """
         try:
             # Query product_urls table for this pharmacy
-            result = (
+            query = (
                 self.client.table("product_urls")
                 .select("product_url")
                 .eq("pharmacy_source", pharmacy_source)
-                .execute()
             )
 
+            # Add category filter if specified
+            if category:
+                query = query.eq("category", category)
+
+            result = query.execute()
+
             urls = [row["product_url"] for row in result.data if row.get("product_url")]
-            logger.info(f"Found {len(urls)} URLs to scrape for {pharmacy_source}")
+            category_msg = f" (category: {category})" if category else ""
+            logger.info(f"Found {len(urls)} URLs to scrape for {pharmacy_source}{category_msg}")
             return urls
 
         except Exception as e:

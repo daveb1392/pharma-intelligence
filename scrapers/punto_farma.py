@@ -211,20 +211,21 @@ class PuntoFarmaProduct:
 # PHASE 1: URL COLLECTION (Using POST API)
 # ==============================================================================
 
-async def collect_urls_from_api() -> int:
-    """Phase 1: Fetch product URLs from POST API and save to database.
+async def collect_urls_from_category(category_id: str, category_name: str, base_url: str, client: Any) -> set:
+    """Collect URLs from a single category.
 
-    This uses Punto Farma's Next.js Server Action pagination API which is much
-    faster than clicking through pages.
+    Args:
+        category_id: Category ID (e.g., "1", "238")
+        category_name: Category name slug (e.g., "medicamentos", "nutricion-y-deporte")
+        base_url: Base URL of the site
+        client: httpx AsyncClient instance
 
     Returns:
-        Number of total URLs saved to database
+        Set of unique product URLs collected
     """
-    import httpx
     import json
 
-    base_url = "https://www.puntofarma.com.py"
-    api_url = f"{base_url}/categoria/1/medicamentos"
+    api_url = f"{base_url}/categoria/{category_id}/{category_name}"
 
     # Headers required for Next.js Server Action
     headers = {
@@ -237,86 +238,127 @@ async def collect_urls_from_api() -> int:
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Get first page to determine total products and pages
-        payload = '["/productos/categoria/1?p=1&orderBy=destacado&descuento="]'
-        response = await client.post(api_url, headers=headers, content=payload)
+    # Get first page to determine total products and pages
+    payload = f'["/productos/categoria/{category_id}?p=1&orderBy=destacado&descuento="]'
+    response = await client.post(api_url, headers=headers, content=payload)
 
-        # Parse Next.js Server Component response (format: "1:{json_data}")
-        match = re.search(r'1:(\{"ok".*\})', response.text)
-        if not match:
-            logger.error("Failed to parse API response format")
-            return 0
+    # Parse Next.js Server Component response (format: "1:{json_data}")
+    match = re.search(r'1:(\{"ok".*\})', response.text)
+    if not match:
+        logger.error(f"Failed to parse API response format for category {category_id}")
+        return set()
 
-        data = json.loads(match.group(1))
-        total_products = data.get("total", 0)
-        results_per_page = len(data.get("results", []))
+    data = json.loads(match.group(1))
+    total_products = data.get("total", 0)
+    results_per_page = len(data.get("results", []))
 
-        if results_per_page == 0:
-            logger.error("No products found in first page")
-            return 0
+    if results_per_page == 0:
+        logger.error(f"No products found in first page for category {category_id}")
+        return set()
 
-        total_pages = (total_products + results_per_page - 1) // results_per_page
+    total_pages = (total_products + results_per_page - 1) // results_per_page
 
-        logger.info(f"Found {total_products} total products across {total_pages} pages")
+    logger.info(f"Category {category_name}: Found {total_products} total products across {total_pages} pages")
 
-        seen_urls = set()
+    seen_urls = set()
 
-        # Loop through all pages
-        for page in range(1, total_pages + 1):
-            payload = f'["/productos/categoria/1?p={page}&orderBy=destacado&descuento="]'
+    # Loop through all pages
+    for page in range(1, total_pages + 1):
+        payload = f'["/productos/categoria/{category_id}?p={page}&orderBy=destacado&descuento="]'
 
-            try:
-                response = await client.post(api_url, headers=headers, content=payload)
+        try:
+            response = await client.post(api_url, headers=headers, content=payload)
 
-                # Parse response
-                match = re.search(r'1:(\{"ok".*\})', response.text)
-                if not match:
-                    logger.warning(f"Failed to parse page {page}")
-                    continue
-
-                page_data = json.loads(match.group(1))
-                products = page_data.get("results", [])
-
-                urls_to_insert = []
-                for product in products:
-                    codigo = product.get("codigo")  # Site code
-                    descripcion = product.get("descripcion", "")
-                    codigoBarra = product.get("codigoBarra")  # Barcode
-
-                    if not codigo:
-                        continue
-
-                    # Build product URL (Punto Farma format: /producto/{codigo}/{slug})
-                    slug = descripcion.lower().replace(' ', '-')
-                    slug = re.sub(r'[^a-z0-9-]', '', slug)  # Remove special chars
-                    slug = re.sub(r'-+', '-', slug)  # Replace multiple dashes
-                    product_url = f"{base_url}/producto/{codigo}/{slug}"
-
-                    if product_url in seen_urls:
-                        continue
-                    seen_urls.add(product_url)
-
-                    urls_to_insert.append({
-                        "pharmacy_source": "punto_farma",
-                        "product_url": product_url,
-                        "site_code": str(codigo),
-                    })
-
-                # Save to database
-                global db_loader_instance
-                if db_loader_instance and urls_to_insert:
-                    inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
-                    logger.info(f"Page {page}/{total_pages}: Saved {inserted} URLs")
-
-                await asyncio.sleep(0.1)  # Small delay between requests
-
-            except Exception as e:
-                logger.error(f"Error fetching page {page}: {e}")
+            # Parse response
+            match = re.search(r'1:(\{"ok".*\})', response.text)
+            if not match:
+                logger.warning(f"Failed to parse page {page} for category {category_id}")
                 continue
 
-        logger.info(f"Finished: {len(seen_urls)} total unique URLs collected")
-        return len(seen_urls)
+            page_data = json.loads(match.group(1))
+            products = page_data.get("results", [])
+
+            urls_to_insert = []
+            for product in products:
+                codigo = product.get("codigo")  # Site code
+                descripcion = product.get("descripcion", "")
+                codigoBarra = product.get("codigoBarra")  # Barcode
+
+                if not codigo:
+                    continue
+
+                # Build product URL (Punto Farma format: /producto/{codigo}/{slug})
+                slug = descripcion.lower().replace(' ', '-')
+                slug = re.sub(r'[^a-z0-9-]', '', slug)  # Remove special chars
+                slug = re.sub(r'-+', '-', slug)  # Replace multiple dashes
+                product_url = f"{base_url}/producto/{codigo}/{slug}"
+
+                if product_url in seen_urls:
+                    continue
+                seen_urls.add(product_url)
+
+                urls_to_insert.append({
+                    "pharmacy_source": "punto_farma",
+                    "product_url": product_url,
+                    "site_code": str(codigo),
+                    "category": category_name,
+                })
+
+            # Save to database
+            global db_loader_instance
+            if db_loader_instance and urls_to_insert:
+                inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                logger.info(f"Category {category_name} - Page {page}/{total_pages}: Saved {inserted} URLs")
+
+            await asyncio.sleep(0.1)  # Small delay between requests
+
+        except Exception as e:
+            logger.error(f"Error fetching page {page} for category {category_id}: {e}")
+            continue
+
+    logger.info(f"Category {category_name}: Collected {len(seen_urls)} unique URLs")
+    return seen_urls
+
+
+async def collect_urls_from_api() -> int:
+    """Phase 1: Fetch product URLs from POST API and save to database.
+
+    This uses Punto Farma's Next.js Server Action pagination API which is much
+    faster than clicking through pages.
+
+    Scrapes both:
+    - Category 1: Medicamentos
+    - Category 238: Nutrición y Deporte
+
+    Returns:
+        Number of total URLs saved to database
+    """
+    import httpx
+
+    base_url = "https://www.puntofarma.com.py"
+
+    # Categories to scrape
+    categories = [
+        {"id": "1", "name": "medicamentos"},
+        {"id": "238", "name": "nutricion-y-deporte"},
+    ]
+
+    all_urls = set()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for category in categories:
+            logger.info(f"Collecting URLs from category: {category['name']}")
+            urls = await collect_urls_from_category(
+                category["id"],
+                category["name"],
+                base_url,
+                client
+            )
+            all_urls.update(urls)
+            logger.info(f"Total unique URLs so far: {len(all_urls)}")
+
+        logger.info(f"Finished: {len(all_urls)} total unique URLs collected from all categories")
+        return len(all_urls)
 
 
 # ==============================================================================
@@ -421,12 +463,43 @@ async def main(phase: str = None) -> None:
             await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
             raise
 
-    elif phase == "phase2":
+    elif phase == "phase1_nutricion":
         # ============================================================
-        # PHASE 2: SCRAPE PRODUCTS FROM DATABASE URLS
+        # PHASE 1: COLLECT ONLY NUTRICIÓN Y DEPORTE URLS
         # ============================================================
         logger.info("=" * 80)
-        logger.info("PHASE 2: Scraping products from collected URLs")
+        logger.info("PHASE 1: Collecting URLs from Nutrición y Deporte category only")
+        logger.info("=" * 80)
+
+        run_id = await db_loader.start_scraping_run("punto_farma_urls", "nutricion_y_deporte_api")
+
+        try:
+            import httpx
+
+            base_url = "https://www.puntofarma.com.py"
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                urls = await collect_urls_from_category("238", "nutricion-y-deporte", base_url, client)
+                total_urls = len(urls)
+
+            await db_loader.complete_scraping_run(run_id, 0, 0)
+            logger.info("=" * 80)
+            logger.info(f"PHASE 1 COMPLETE! Collected {total_urls} product URLs from Nutrición y Deporte")
+            logger.info("Run Phase 2 to scrape these products:")
+            logger.info("  python -m scrapers.punto_farma phase2")
+            logger.info("=" * 80)
+
+        except Exception as e:
+            logger.error(f"Phase 1 (nutricion) failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
+
+    elif phase == "phase2":
+        # ============================================================
+        # PHASE 2: SCRAPE PRODUCTS FROM DATABASE URLS (ALL CATEGORIES)
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 2: Scraping products from collected URLs (all categories)")
         logger.info("=" * 80)
 
         # Get URLs to scrape (product_name IS NULL or scraped_at < today)
@@ -438,6 +511,60 @@ async def main(phase: str = None) -> None:
             return
 
         run_id = await db_loader.start_scraping_run("punto_farma", f"phase2_{len(urls_to_scrape)}_products")
+
+        try:
+            crawler = PlaywrightCrawler(
+                request_handler=router,
+                proxy_configuration=proxy_configuration,
+                max_requests_per_crawl=len(urls_to_scrape) + 100,
+                max_request_retries=2,
+                request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
+                concurrency_settings=ConcurrencySettings(max_concurrency=20),  # Increased concurrency for faster scraping
+                headless=True,
+            )
+
+            # Enqueue all product URLs
+            requests = [
+                Request.from_url(url, label="product_detail") for url in urls_to_scrape
+            ]
+
+            logger.info(f"Starting scraping of {len(requests)} products...")
+
+            await crawler.run(requests)
+
+            # Get final count
+            dataset = await crawler.get_dataset()
+            data = await dataset.get_data()
+            total_scraped = len(data.items)
+
+            logger.info("=" * 80)
+            logger.info(f"PHASE 2 COMPLETE: {total_scraped} products scraped!")
+            logger.info("=" * 80)
+
+            await db_loader.complete_scraping_run(run_id, total_scraped, 0)
+
+        except Exception as e:
+            logger.error(f"Phase 2 failed: {e}")
+            await db_loader.complete_scraping_run(run_id, 0, 0, str(e))
+            raise
+
+    elif phase == "phase2_nutricion":
+        # ============================================================
+        # PHASE 2: SCRAPE ONLY NUTRICIÓN Y DEPORTE PRODUCTS
+        # ============================================================
+        logger.info("=" * 80)
+        logger.info("PHASE 2: Scraping Nutrición y Deporte products only")
+        logger.info("=" * 80)
+
+        # Get URLs to scrape for nutricion-y-deporte category only
+        urls_to_scrape = await db_loader.get_urls_to_scrape("punto_farma", category="nutricion-y-deporte")
+        logger.info(f"Found {len(urls_to_scrape)} Nutrición y Deporte URLs to scrape")
+
+        if not urls_to_scrape:
+            logger.info("No Nutrición y Deporte URLs to scrape! Run phase1_nutricion first.")
+            return
+
+        run_id = await db_loader.start_scraping_run("punto_farma", f"phase2_nutricion_{len(urls_to_scrape)}_products")
 
         try:
             crawler = PlaywrightCrawler(
