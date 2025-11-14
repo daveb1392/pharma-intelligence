@@ -378,6 +378,7 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
     concurrency_settings = ConcurrencySettings(
         max_concurrency=3,  # Lower for GitHub Actions (limited resources)
         min_concurrency=1,
+        desired_concurrency=3,
     )
 
     crawler = PlaywrightCrawler(
