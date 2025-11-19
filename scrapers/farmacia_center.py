@@ -208,6 +208,52 @@ class FarmaciaCenterProduct:
                 if image_url and not image_url.startswith("http"):
                     image_url = f"https:{image_url}" if image_url.startswith("//") else None
 
+            # Bank discount extraction
+            # <div class="descuentosMDP">
+            #   <div class="desc_15">
+            #     <span class="img" title="BASA"><img ... alt="BASA"></span>
+            #     <span class="precio"><span class="sim">PYG</span> <span class="monto">37.695</span></span>
+            #   </div>
+            #   <!-- Multiple banks possible -->
+            #   <div class="desc_15">
+            #     <span class="img" title="Itaú"><img ... alt="Itaú"></span>
+            #     <span class="precio"><span class="sim">PYG</span> <span class="monto">35.000</span></span>
+            #   </div>
+            # </div>
+            bank_discount_price = None
+            bank_discount_bank_name = None
+            bank_payment_offers = None
+
+            descuentos_mdp = soup.select_one(".descuentosMDP")
+            if descuentos_mdp:
+                # Find all bank discount sections (there might be multiple)
+                desc_divs = descuentos_mdp.find_all("div", class_=re.compile(r"desc_\d+"))
+
+                bank_names = []
+                bank_prices = []
+
+                for desc_div in desc_divs:
+                    # Extract bank name from title attribute
+                    bank_img = desc_div.select_one(".img[title]")
+                    if bank_img:
+                        bank_name = bank_img.get("title", "").strip()
+                        if bank_name:
+                            bank_names.append(bank_name)
+
+                    # Extract bank discount price
+                    monto_elem = desc_div.select_one(".precio .monto")
+                    if monto_elem:
+                        price_text = monto_elem.get_text(strip=True)
+                        price_clean = price_text.replace(".", "").replace(",", "")
+                        if price_clean.isdigit():
+                            bank_prices.append(float(price_clean))
+
+                # Use the lowest price if multiple banks
+                if bank_names and bank_prices:
+                    bank_discount_bank_name = ", ".join(bank_names)
+                    bank_discount_price = min(bank_prices)  # Best price for customer
+                    bank_payment_offers = f"Descuento exclusivo con {bank_discount_bank_name}"
+
             # Build product dictionary
             product_data = {
                 "site_code": site_code,
@@ -222,9 +268,9 @@ class FarmaciaCenterProduct:
                 "original_price": original_price,
                 "discount_percentage": discount_percentage,
                 "discount_amount": discount_amount,
-                "bank_discount_price": None,
-                "bank_discount_bank_name": None,
-                "bank_payment_offers": None,
+                "bank_discount_price": bank_discount_price,
+                "bank_discount_bank_name": bank_discount_bank_name,
+                "bank_payment_offers": bank_payment_offers,
                 "requires_prescription": False,  # Not visible on page
                 "prescription_type": None,
                 "payment_methods": None,

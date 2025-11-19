@@ -143,34 +143,59 @@ class PuntoFarmaProduct:
             if desc_elem:
                 product_description = desc_elem.get_text(strip=True)
 
-            # Bank discount (Itaú QR Débito)
+            # Bank discount (Itaú QR)
+            # Structure:
+            # <div class="d-flex justify-content-between align-items-center">
+            #   <div class="text"><h6>Con Itaú QR <small>...</small></h6></div>
+            #   <div class="d-flex flex-lg-row flex-column-reverse gap-2">
+            #     <div class="d-flex gap-1">
+            #       <div class="forma-container"><img alt="Itaú QR" /></div>
+            #       <div class="forma-container"><img alt="Itaú" /></div>
+            #       <div class="forma-container"><img alt="Itaú Amex" /></div>
+            #     </div>
+            #     <span class="fs-5 fw-semibold">Gs. 31.500</span>
+            #   </div>
+            # </div>
             bank_discount_price = None
             bank_discount_bank_name = None
             bank_payment_offers = None
 
-            # Look for bank discount section: <h6>Con Itau QR Debito</h6> and price
-            bank_section = soup.find("h6", string=re.compile(r"Con\s+Itau", re.IGNORECASE))
-            if bank_section:
-                # Extract bank name from heading: "Con Itau QR Debito"
-                bank_text = bank_section.get_text(strip=True)
-                bank_match = re.search(r"Con\s+(.+?)(?:\s+\*|$)", bank_text, re.IGNORECASE)
-                if bank_match:
-                    bank_discount_bank_name = bank_match.group(1).strip()
+            # Find h6 containing "Con Itaú" or "Con Itau"
+            h6_tags = soup.find_all("h6")
+            for h6 in h6_tags:
+                h6_text = h6.get_text()
+                if re.search(r"Con\s+Ita[uú]", h6_text, re.IGNORECASE):
+                    # Found bank discount section
+                    # Navigate to outer container div
+                    container = h6.find_parent("div", class_="d-flex")
+                    if container and "justify-content-between" in container.get("class", []):
+                        # Extract bank names from image alt attributes
+                        bank_images = container.find_all("img", alt=True)
+                        bank_names = []
+                        for img in bank_images:
+                            alt_text = img.get("alt", "").strip()
+                            # Filter for Itaú-related banks
+                            if "ita" in alt_text.lower():
+                                bank_names.append(alt_text)
 
-                # Find the price in the same container
-                container = bank_section.find_parent("div", class_="d-flex")
-                if container:
-                    price_span = container.find("span", class_="fs-5")
-                    if price_span:
-                        price_text = price_span.get_text(strip=True)
-                        # Extract price: "Gs. 8.640"
-                        price_match = re.search(r"Gs\.\s*([\d.,]+)", price_text)
-                        if price_match:
-                            bank_discount_price = float(price_match.group(1).replace(".", "").replace(",", ""))
+                        # Join bank names (e.g., "Itaú QR, Itaú, Itaú Amex")
+                        if bank_names:
+                            bank_discount_bank_name = ", ".join(bank_names)
 
-                # Build bank payment offers description
-                if bank_discount_bank_name:
-                    bank_payment_offers = f"Descuento exclusivo con {bank_discount_bank_name}"
+                        # Extract price from span.fs-5
+                        price_span = container.find("span", class_=re.compile(r"fs-5"))
+                        if price_span:
+                            price_text = price_span.get_text(strip=True)
+                            # Extract price: "Gs. 31.500"
+                            price_match = re.search(r"Gs\.\s*([\d.,]+)", price_text)
+                            if price_match:
+                                bank_discount_price = float(price_match.group(1).replace(".", "").replace(",", ""))
+
+                        # Build bank payment offers description
+                        if bank_discount_bank_name and bank_discount_price:
+                            bank_payment_offers = f"Descuento exclusivo con {bank_discount_bank_name}"
+
+                        break  # Found the bank discount section, no need to continue
 
             # Build product dictionary
             product_data = {
