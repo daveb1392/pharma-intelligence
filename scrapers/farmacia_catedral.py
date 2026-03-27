@@ -295,88 +295,101 @@ async def collect_urls_from_api() -> int:
     base_url = "https://www.farmaciacatedral.com.py"
     api_url = f"{base_url}/get-productos"
 
-    logger.info("Fetching first page to get total pages...")
+    # Top-level category IDs to scrape (from TODO research)
+    # DB unique constraint on (pharmacy_source, product_url) handles dedup automatically
+    category_ids = [
+        (1, "medicamentos"),
+        (46, "cuidado-corporal"),
+        (67, "cuidado-de-la-piel"),
+        (132, "maquillajes"),
+        (248, "cuidado-personal"),
+        (80, "cuidado-capilar"),
+        (35, "suplemento-vitaminico-y-mineral"),
+        (70, "cremas-faciales-y-corporales"),
+        (94, "bebes-y-maternidad"),
+        (84, "dermocosmetica"),
+        (125, "perfumes-y-fragancias"),
+    ]
+
+    seen_urls = set()
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Get first page to determine total pages
-        params = {
-            "page": 1,
-            "categoria": 1,
-            "ordenar_por": 0,
-            "marcas": "",
-            "categorias": "",
-            "categorias_top": 1,
-            "porcentajes": "",
-            "atributos": ""
-        }
+        for cat_id, cat_name in category_ids:
+            params = {
+                "page": 1,
+                "categoria": cat_id,
+                "ordenar_por": 0,
+                "marcas": "",
+                "categorias": "",
+                "categorias_top": cat_id,
+                "porcentajes": "",
+                "atributos": ""
+            }
 
-        try:
-            response = await client.get(api_url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            try:
+                response = await client.get(api_url, params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            total_pages = data["paginacion"]["last_page"]
-            total_items = data["paginacion"]["total"]
-            per_page = data["paginacion"]["per_page"]
+                total_pages = data["paginacion"]["last_page"]
+                total_items = data["paginacion"]["total"]
 
-            logger.info(f"Found {total_items} products across {total_pages} pages ({per_page} per page)")
+                logger.info(f"Category {cat_name} (ID {cat_id}): {total_items} products across {total_pages} pages")
 
-            seen_urls = set()
+                # Loop through all pages
+                for page in range(1, total_pages + 1):
+                    params["page"] = page
 
-            # Loop through all pages
-            for page in range(1, total_pages + 1):
-                params["page"] = page
+                    try:
+                        response = await client.get(api_url, params=params)
+                        response.raise_for_status()
+                        page_data = response.json()
 
-                try:
-                    response = await client.get(api_url, params=params)
-                    response.raise_for_status()
-                    page_data = response.json()
+                        products = page_data["paginacion"]["data"]
+                        urls_to_insert = []
 
-                    products = page_data["paginacion"]["data"]
-                    urls_to_insert = []
+                        for product in products:
+                            product_url = product.get("url_ver")
+                            if not product_url:
+                                continue
 
-                    for product in products:
-                        product_url = product.get("url_ver")
-                        if not product_url:
-                            continue
+                            # Skip duplicates
+                            if product_url in seen_urls:
+                                continue
+                            seen_urls.add(product_url)
 
-                        # Skip duplicates
-                        if product_url in seen_urls:
-                            continue
-                        seen_urls.add(product_url)
+                            # Extract site_code from URL or use codigo_articulo
+                            site_code = product.get("codigo_articulo")
+                            if not site_code:
+                                url_match = re.search(r"/producto/(\d+)/", product_url)
+                                if url_match:
+                                    site_code = url_match.group(1)
 
-                        # Extract site_code from URL or use codigo_articulo
-                        site_code = product.get("codigo_articulo")
-                        if not site_code:
-                            url_match = re.search(r"/producto/(\d+)/", product_url)
-                            if url_match:
-                                site_code = url_match.group(1)
+                            urls_to_insert.append({
+                                "pharmacy_source": "farmacia_catedral",
+                                "product_url": product_url,
+                                "site_code": site_code,
+                            })
 
-                        urls_to_insert.append({
-                            "pharmacy_source": "farmacia_catedral",
-                            "product_url": product_url,
-                            "site_code": site_code,
-                        })
+                        # Save URLs to database
+                        global db_loader_instance
+                        if db_loader_instance and urls_to_insert:
+                            inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                            logger.info(f"{cat_name} page {page}/{total_pages}: Saved {inserted} URLs ({len(seen_urls)} total)")
 
-                    # Save URLs to database
-                    global db_loader_instance
-                    if db_loader_instance and urls_to_insert:
-                        inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
-                        logger.info(f"Page {page}/{total_pages}: Saved {inserted} URLs ({len(seen_urls)} total)")
+                        # Small delay to be nice to the server
+                        await asyncio.sleep(0.1)
 
-                    # Small delay to be nice to the server
-                    await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Error fetching {cat_name} page {page}: {e}")
+                        continue
 
-                except Exception as e:
-                    logger.error(f"Error fetching page {page}: {e}")
-                    continue
+            except Exception as e:
+                logger.error(f"Error fetching category {cat_name} (ID {cat_id}): {e}")
+                continue
 
-            logger.info(f"Finished: {len(seen_urls)} total unique URLs collected from API")
-            return len(seen_urls)
-
-        except Exception as e:
-            logger.error(f"Error fetching API data: {e}")
-            raise
+    logger.info(f"Finished: {len(seen_urls)} total unique URLs collected from all categories")
+    return len(seen_urls)
 
 
 # ==============================================================================
@@ -463,7 +476,7 @@ async def main(phase: str = None) -> None:
         logger.info("PHASE 1: Collecting product URLs from JSON API")
         logger.info("=" * 80)
 
-        run_id = await db_loader.start_scraping_run("farmacia_catedral_urls", "medicamentos_api")
+        run_id = await db_loader.start_scraping_run("farmacia_catedral_urls", "all_categories_api")
 
         try:
             # Use JSON API instead of scrolling - much faster!

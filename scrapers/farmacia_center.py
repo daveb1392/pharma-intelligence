@@ -199,14 +199,22 @@ class FarmaciaCenterProduct:
                 current_price = original_price
                 original_price = None
 
-            # Image URL: <img loading="lazy" data-src-g="..." src="..." alt="...">
+            # Image URL: find product image in HTML (catalogo images, not logo/icons)
             image_url = None
-            image_elem = soup.select_one("img[alt]")
-            if image_elem:
-                # Prefer data-src-g, fallback to src
-                image_url = image_elem.get("data-src-g") or image_elem.get("src")
-                if image_url and not image_url.startswith("http"):
-                    image_url = f"https:{image_url}" if image_url.startswith("//") else None
+            for img in soup.select("img[src*='/catalogo/']"):
+                src = img.get("src", "")
+                if "1000x1000" in src or "1024-1024" in src:
+                    image_url = f"https:{src}" if src.startswith("//") else src
+                    break
+
+            # Fallback: JSON data (variante.img.u)
+            if not image_url and json_data:
+                try:
+                    img_path = json_data.get("variante", {}).get("img", {}).get("u")
+                    if img_path and "nd.png" not in img_path:
+                        image_url = f"https:{img_path}" if img_path.startswith("//") else img_path
+                except (AttributeError, TypeError):
+                    pass
 
             # Bank discount extraction
             # <div class="descuentosMDP">
@@ -303,84 +311,98 @@ async def collect_urls_from_pages() -> int:
     import httpx
 
     base_url = "https://www.farmacenter.com.py"
-    url_template = f"{base_url}/medicamentos?js=1&pag={{page}}"
 
-    logger.info("Fetching first page to get total pages...")
+    # All category slugs to scrape
+    category_slugs = [
+        "medicamentos",
+        "belleza",
+        "higiene",
+        "cuidado-de-la-salud",
+        "bebes",
+        "bazar-y-hogar",
+        "alimentos",
+        "infantiles",
+    ]
+
+    seen_urls = set()
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            # Get first page to determine total pages
-            response = await client.get(url_template.format(page=1))
-            response.raise_for_status()
+        for category_slug in category_slugs:
+            url_template = f"{base_url}/{category_slug}?js=1&pag={{page}}"
+            logger.info(f"Fetching category: {category_slug}")
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            try:
+                # Get first page to determine total pages
+                response = await client.get(url_template.format(page=1))
+                response.raise_for_status()
 
-            # Get total from data-total attribute
-            central = soup.select_one("#central[data-total]")
-            if not central:
-                raise Exception("Could not find total products")
+                soup = BeautifulSoup(response.text, "html.parser")
 
-            total_products = int(central.get("data-total"))
-            products_per_page = 12
-            total_pages = (total_products + products_per_page - 1) // products_per_page  # Ceiling division
-
-            logger.info(f"Found {total_products} products across ~{total_pages} pages ({products_per_page} per page)")
-
-            seen_urls = set()
-
-            # Loop through all pages
-            for page in range(1, total_pages + 1):
-                try:
-                    response = await client.get(url_template.format(page=page))
-                    response.raise_for_status()
-
-                    soup = BeautifulSoup(response.text, "html.parser")
-
-                    # Extract product links
-                    product_links = soup.select("a.img[href*='/catalogo/']")
-                    urls_to_insert = []
-
-                    for link in product_links:
-                        href = link.get("href")
-                        if not href:
-                            continue
-
-                        # Skip duplicates
-                        if href in seen_urls:
-                            continue
-                        seen_urls.add(href)
-
-                        # Extract site_code from URL: /catalogo/somero-..._10030893_10030893
-                        site_code = None
-                        url_match = re.search(r"_(\d+)_\d+$", href)
-                        if url_match:
-                            site_code = url_match.group(1)
-
-                        urls_to_insert.append({
-                            "pharmacy_source": "farma_center",
-                            "product_url": href,
-                            "site_code": site_code,
-                        })
-
-                    # Save URLs to database
-                    global db_loader_instance
-                    if db_loader_instance and urls_to_insert:
-                        inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
-                        logger.info(f"Page {page}/{total_pages}: Saved {inserted} URLs ({len(seen_urls)} total)")
-
-                    # Small delay to be nice to the server
-                    await asyncio.sleep(0.1)
-
-                except Exception as e:
-                    logger.error(f"Error fetching page {page}: {e}")
+                # Get total from data-total attribute
+                central = soup.select_one("#central[data-total]")
+                if not central:
+                    logger.warning(f"Could not find total products for {category_slug}, skipping")
                     continue
 
-            logger.info(f"Finished: {len(seen_urls)} total unique URLs collected from paginated HTML")
-            return len(seen_urls)
+                total_products = int(central.get("data-total"))
+                products_per_page = 12
+                total_pages = (total_products + products_per_page - 1) // products_per_page
 
-        except Exception as e:
-            logger.error(f"Error fetching paginated HTML: {e}")
-            raise
+                logger.info(f"Category {category_slug}: {total_products} products across ~{total_pages} pages")
+
+                # Loop through all pages
+                for page in range(1, total_pages + 1):
+                    try:
+                        response = await client.get(url_template.format(page=page))
+                        response.raise_for_status()
+
+                        soup = BeautifulSoup(response.text, "html.parser")
+
+                        # Extract product links
+                        product_links = soup.select("a.img[href*='/catalogo/']")
+                        urls_to_insert = []
+
+                        for link in product_links:
+                            href = link.get("href")
+                            if not href:
+                                continue
+
+                            # Skip duplicates
+                            if href in seen_urls:
+                                continue
+                            seen_urls.add(href)
+
+                            # Extract site_code from URL: /catalogo/somero-..._10030893_10030893
+                            site_code = None
+                            url_match = re.search(r"_(\d+)_\d+$", href)
+                            if url_match:
+                                site_code = url_match.group(1)
+
+                            urls_to_insert.append({
+                                "pharmacy_source": "farma_center",
+                                "product_url": href,
+                                "site_code": site_code,
+                            })
+
+                        # Save URLs to database
+                        global db_loader_instance
+                        if db_loader_instance and urls_to_insert:
+                            inserted = await db_loader_instance.insert_product_urls(urls_to_insert)
+                            logger.info(f"{category_slug} page {page}/{total_pages}: Saved {inserted} URLs ({len(seen_urls)} total)")
+
+                        # Small delay to be nice to the server
+                        await asyncio.sleep(0.1)
+
+                    except Exception as e:
+                        logger.error(f"Error fetching {category_slug} page {page}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.error(f"Error fetching category {category_slug}: {e}")
+                continue
+
+    logger.info(f"Finished: {len(seen_urls)} total unique URLs collected from all categories")
+    return len(seen_urls)
 
 
 # ==============================================================================
@@ -467,7 +489,7 @@ async def main(phase: str = None) -> None:
         logger.info("PHASE 1: Collecting product URLs from paginated HTML")
         logger.info("=" * 80)
 
-        run_id = await db_loader.start_scraping_run("farma_center_urls", "medicamentos_pages")
+        run_id = await db_loader.start_scraping_run("farma_center_urls", "all_categories_pages")
 
         try:
             # Use paginated HTML instead of scrolling - much faster!

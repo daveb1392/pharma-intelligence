@@ -362,10 +362,16 @@ async def collect_urls_from_api() -> int:
 
     base_url = "https://www.puntofarma.com.py"
 
-    # Categories to scrape
+    # Categories to scrape (all top-level categories)
     categories = [
         {"id": "1", "name": "medicamentos"},
+        {"id": "2", "name": "perfumes-y-fragancias"},
+        {"id": "3", "name": "bebe-y-mama"},
+        {"id": "4", "name": "cosmeticos"},
+        {"id": "5", "name": "higiene"},
+        {"id": "6", "name": "salud"},
         {"id": "238", "name": "nutricion-y-deporte"},
+        {"id": "472", "name": "mundo-dermocosmetica"},
     ]
 
     all_urls = set()
