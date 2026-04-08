@@ -316,6 +316,7 @@ async def main() -> None:
             max_requests_per_crawl=settings.max_requests_per_crawl,
             max_request_retries=2,  # Limit retries to avoid getting stuck
             headless=True,
+            browser_launch_options={"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
         )
 
         # Start URLs (category pages)

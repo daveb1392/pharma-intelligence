@@ -5,6 +5,7 @@ Phase 2: Scrape each URL from database where product_name IS NULL or scraped_at 
 """
 
 import asyncio
+import os
 import re
 import sys
 from datetime import datetime, date, timedelta
@@ -541,6 +542,12 @@ async def main(phase: str = None) -> None:
             logger.info("No URLs to scrape! Run phase1 first or all products already scraped today.")
             return
 
+        # Optional subset limit for testing/debugging
+        phase2_limit = int(os.environ.get("PHASE2_LIMIT", "0"))
+        if phase2_limit > 0:
+            urls_to_scrape = urls_to_scrape[:phase2_limit]
+            logger.info(f"PHASE2_LIMIT={phase2_limit} — limiting to {len(urls_to_scrape)} URLs")
+
         run_id = await db_loader.start_scraping_run("punto_farma", f"phase2_{len(urls_to_scrape)}_products")
 
         try:
@@ -552,6 +559,7 @@ async def main(phase: str = None) -> None:
                 request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
                 concurrency_settings=ConcurrencySettings(max_concurrency=20),  # Increased concurrency for faster scraping
                 headless=True,
+                browser_launch_options={"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
             )
 
             # Enqueue all product URLs
@@ -606,6 +614,7 @@ async def main(phase: str = None) -> None:
                 request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
                 concurrency_settings=ConcurrencySettings(max_concurrency=20),  # Increased concurrency for faster scraping
                 headless=True,
+                browser_launch_options={"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
             )
 
             # Enqueue all product URLs

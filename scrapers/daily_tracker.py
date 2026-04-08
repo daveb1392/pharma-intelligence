@@ -412,6 +412,7 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
         max_request_retries=3,
         headless=True,
         browser_type="chromium",
+        browser_launch_options={"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
     )
 
     # Add URLs

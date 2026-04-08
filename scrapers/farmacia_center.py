@@ -534,6 +534,7 @@ async def main(phase: str = None) -> None:
                 request_handler_timeout=timedelta(seconds=30),  # 30 seconds per product page
                 concurrency_settings=ConcurrencySettings(max_concurrency=20),  # Increased concurrency for faster scraping
                 headless=True,
+                browser_launch_options={"args": ["--no-sandbox", "--disable-setuid-sandbox"]},
             )
 
             # Enqueue all product URLs

@@ -14,12 +14,17 @@ class SupabaseLoader:
     """Load scraped data to Supabase database."""
 
     def __init__(self):
-        """Initialize Supabase client."""
+        """Initialize Supabase client.
+
+        Prefers the service role key when available so the scraper can write
+        through RLS (e.g. the price_history trigger). Falls back to the anon
+        key for environments where only that is configured.
+        """
         settings = get_settings()
-        self.client: Client = create_client(
-            settings.supabase_url, settings.supabase_key
-        )
-        logger.info("Supabase client initialized")
+        key = settings.supabase_service_role_key or settings.supabase_key
+        key_kind = "service_role" if settings.supabase_service_role_key else "anon"
+        self.client: Client = create_client(settings.supabase_url, key)
+        logger.info(f"Supabase client initialized ({key_kind} key)")
 
     async def start_scraping_run(
         self, pharmacy_source: str, categories: str
