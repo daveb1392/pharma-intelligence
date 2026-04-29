@@ -1,0 +1,9 @@
+/var/log/pharma/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 pharma pharma
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily full scrape — all 4 pharmacies
+
+[Timer]
+# 2:00 AM AST (America/Asuncion) daily
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

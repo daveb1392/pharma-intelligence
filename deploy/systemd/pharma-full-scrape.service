@@ -1,0 +1,22 @@
+[Unit]
+Description=Pharma Intelligence — Full Scrape (all 4 pharmacies)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pharma
+Group=pharma
+WorkingDirectory=/opt/pharma-intelligence
+EnvironmentFile=/opt/pharma-intelligence/.env
+ExecStart=/opt/pharma-intelligence/venv/bin/bash -c './scripts/run_full_scrape.sh'
+TimeoutStartSec=14400
+StandardOutput=append:/var/log/pharma/full_scrape.log
+StandardError=append:/var/log/pharma/full_scrape.log
+
+# Resource limits
+MemoryMax=7G
+CPUQuota=300%
+
+[Install]
+WantedBy=multi-user.target

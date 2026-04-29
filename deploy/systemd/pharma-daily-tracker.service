@@ -1,0 +1,21 @@
+[Unit]
+Description=Pharma Intelligence — Daily Barcode Tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pharma
+Group=pharma
+WorkingDirectory=/opt/pharma-intelligence
+EnvironmentFile=/opt/pharma-intelligence/.env
+ExecStart=/opt/pharma-intelligence/venv/bin/python -m scrapers.daily_tracker
+TimeoutStartSec=3600
+StandardOutput=append:/var/log/pharma/daily_tracker.log
+StandardError=append:/var/log/pharma/daily_tracker.log
+
+MemoryMax=4G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target

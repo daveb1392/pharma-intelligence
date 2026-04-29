@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily barcode tracker — after full scrape
+
+[Timer]
+# 6:00 AM AST daily (runs after the full scrape finishes)
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
