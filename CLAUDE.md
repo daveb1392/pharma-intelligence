@@ -21,20 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Data Warehouse**: Google BigQuery (future sync from Supabase)
 - **Transformations**: dbt
 - **Visualization**: Looker Studio
-- **Deployment**: ~~Apify Platform~~ **DigitalOcean Droplet** (Apify too expensive for daily scraping)
-
-## Cost Analysis & Deployment Decision
-
-**Apify Platform Costs (TESTED - TOO EXPENSIVE):**
-- Punto Farma Phase 2: ~$20 for 3h 40m runtime
-- Estimated monthly cost for daily runs: **$1,200-1,800/month**
-- **Decision**: Migrated to self-hosted DigitalOcean droplet
-
-**DigitalOcean Droplet (RECOMMENDED):**
-- **8GB RAM droplet**: $48/month (handles 20 concurrent browsers)
-- **16GB RAM droplet**: $96/month (if 8GB insufficient)
-- **Savings**: ~$1,100-1,700/month vs Apify
-- Run scrapers 24/7 with no per-minute costs
+- **Consumer App Deployment**: Railway (frontend + backend)
+- **Scraper Deployment**: Hetzner VPS (8GB+ RAM, scraper-only)
 
 ## Data Extraction Requirements
 
@@ -88,7 +76,7 @@ sql/                # Database migrations
   └── create_barcode_tracking_table.sql  # Tracking table schema
 .github/workflows/  # GitHub Actions (NOTE: not suitable for Playwright)
   └── daily-barcode-tracker.yml  # Daily tracker workflow (use locally instead)
-main.py             # Apify Actor entry point (legacy, no longer used)
+main.py             # Legacy Apify Actor entry point (no longer used)
 ```
 
 ## Key Architecture Decisions
@@ -414,7 +402,7 @@ PHARMACY_FILTER=farmacia_catedral python -m scrapers.daily_tracker
 - ✅ Separate `barcode_tracking_urls` table (isolated from main scraping)
 - ✅ Reuses existing pharmacy handlers (no duplicate code)
 - ✅ Supports `PHARMACY_FILTER` env var for parallel execution
-- ✅ Low concurrency settings optimized for stability (1 browser for GitHub Actions, 10 for local/droplet)
+- ✅ Low concurrency settings optimized for stability (10 concurrent browsers)
 - ✅ Real-time Supabase saving
 - ✅ Automatic price history tracking
 
@@ -442,9 +430,9 @@ CREATE TABLE barcode_tracking_urls (
 - Free tier runners have insufficient RAM for Playwright browsers
 - Persistent crashes even with concurrency=1
 - Error: "Target page, context or browser has been closed"
-- **Solution**: Run locally or on DigitalOcean droplet instead
+- **Solution**: Run on Hetzner VPS instead
 
-**Local/Droplet Execution (RECOMMENDED):**
+**Local/Hetzner Execution (RECOMMENDED):**
 ```bash
 # Test setup
 python scripts/test_tracker.py
@@ -455,7 +443,7 @@ python -m scrapers.daily_tracker
 # Or run pharmacies in parallel
 PHARMACY_FILTER=farma_oliva python -m scrapers.daily_tracker &
 PHARMACY_FILTER=punto_farma python -m scrapers.daily_tracker &
-PHARMACY_FILTER=farmacia_center python -m scrapers.daily_tracker &
+PHARMACY_FILTER=farma_center python -m scrapers.daily_tracker &
 PHARMACY_FILTER=farmacia_catedral python -m scrapers.daily_tracker &
 wait
 ```
@@ -512,37 +500,36 @@ $$ LANGUAGE plpgsql;
 
 ## Deployment
 
-### DigitalOcean Droplet Setup (RECOMMENDED)
+### Consumer App: Railway
 
-**Droplet Specifications:**
-- **8GB RAM / 4 vCPUs**: $48/month (recommended starting point)
-- **16GB RAM / 8 vCPUs**: $96/month (if 8GB insufficient)
-- **Ubuntu 22.04 or 24.04 LTS**
+Frontend (Next.js) and backend (FastAPI) are deployed on Railway.
 
-**Installation Steps:**
+### Scrapers: Hetzner VPS
+
+**Server Specifications:**
+- **8GB RAM / 4 vCPUs** minimum (handles 20 concurrent browsers)
+- **Ubuntu 24.04 LTS**
+- Timezone: `America/Asuncion`
+
+**Setup:**
 1. Install Python 3.11+
-2. Install Playwright: `playwright install chromium`
+2. Install Playwright: `playwright install --with-deps chromium`
 3. Install dependencies: `pip install -r requirements.txt`
 4. Set up environment variables (`.env` file)
-5. Configure cron for daily scraping runs
+5. Configure systemd timer or cron for daily scraping
 
-**Daily Scraping Cron:**
+**Daily Scraping Schedule:**
 ```bash
-# Run all scrapers daily at 2 AM
-0 2 * * * cd /path/to/pharma-intelligence && python run_all_scrapers.py >> /var/log/pharma-scraper.log 2>&1
+# Run all scrapers daily at 2 AM AST
+0 2 * * * cd /opt/pharma-intelligence && ./scripts/run_full_scrape.sh >> /var/log/pharma/full_scrape.log 2>&1
 ```
 
 **Estimated Runtime (with 20 concurrent browsers):**
 - Farma Oliva: ~30 minutes (single-phase)
 - Punto Farma: 2 min (Phase 1) + 55 min (Phase 2) = 57 minutes
-- Farmacia Center: 35 sec (Phase 1) + 35 min (Phase 2) = 36 minutes
+- Farma Center: 35 sec (Phase 1) + 35 min (Phase 2) = 36 minutes
 - Farmacia Catedral: 25 sec (Phase 1) + 40 min (Phase 2) = 41 minutes
 - **Total**: ~2.5-3 hours per day
-
-**Cost Comparison:**
-- Apify: $1,200-1,800/month
-- DigitalOcean 8GB: $48/month
-- **Savings: ~$1,150-1,750/month** (96-98% cost reduction)
 
 ---
 
@@ -551,9 +538,13 @@ $$ LANGUAGE plpgsql;
 ```bash
 # Install dependencies
 pip install -r requirements.txt
-playwright install chromium
+playwright install --with-deps chromium
 
-# Run full scrapers (complete catalog)
+# Run all scrapers (production entrypoint)
+./scripts/run_full_scrape.sh
+./scripts/run_full_scrape.sh punto_farma   # single pharmacy
+
+# Run individual scrapers
 python -m scrapers.farma_oliva
 python -m scrapers.punto_farma phase1      # URL collection
 python -m scrapers.punto_farma phase2      # Product scraping
@@ -620,11 +611,11 @@ ORDER BY p.scraped_at DESC;
 **Issue**: Some product URLs return 404 (product removed from website)
 **Solution**: This is normal - scraper retries 2 times and logs failures. Products may be discontinued.
 
-### Memory Issues on Droplet
+### Memory Issues on Hetzner
 **Issue**: Out of memory with 20 concurrent browsers
 **Solution**:
 1. Reduce concurrency: `ConcurrencySettings(max_concurrency=10)`
-2. Or upgrade to 16GB RAM droplet
+2. Or upgrade to 16GB RAM server
 
 ### Playwright Browser Timeout
 **Issue**: Browser crashes or timeouts
@@ -633,7 +624,7 @@ ORDER BY p.scraped_at DESC;
 ### GitHub Actions Browser Crashes
 **Issue**: "Target page, context or browser has been closed" errors in GitHub Actions
 **Cause**: GitHub Actions free tier runners have insufficient RAM for Playwright browsers
-**Solution**: Run scrapers locally or on DigitalOcean droplet instead. GitHub Actions is not suitable for Playwright-based scraping.
+**Solution**: Run scrapers on Hetzner VPS instead. GitHub Actions is not suitable for Playwright-based scraping.
 
 ### "No URLs in barcode_tracking_urls table"
 **Issue**: Daily tracker reports no URLs to scrape
@@ -653,7 +644,7 @@ ORDER BY p.scraped_at DESC;
 - **Monitor website changes** - Pharmacy sites may change structure, breaking scrapers
 - **Run Phase 1 daily** - Always collect fresh URLs before Phase 2
 - **Price history is automatic** - Database trigger handles it, no code needed
-- **GitHub Actions unsuitable for Playwright** - Free tier lacks RAM for browsers; use local/droplet execution
+- **GitHub Actions unsuitable for Playwright** - Free tier lacks RAM for browsers; use Hetzner VPS
 - **Barcode tracking is temporary** - `barcode_tracking_urls` table can be dropped after campaign ends
 
 ## Reference Documentation
