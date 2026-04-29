@@ -202,8 +202,7 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
     handlers = {
         "farma_oliva": scrape_farma_oliva,
         "punto_farma": scrape_punto_farma,
-        "farma_center": scrape_farmacia_center,  # Note: DB uses "farma_center"
-        "farmacia_center": scrape_farmacia_center,  # Support both names
+        "farma_center": scrape_farmacia_center,
         "farmacia_catedral": scrape_farmacia_catedral,
     }
 

@@ -268,7 +268,7 @@ async def scrape_farmacia_center(context: PlaywrightCrawlingContext, loader: Sup
                 pass
 
         product_data = {
-            "pharmacy_source": "farmacia_center",
+            "pharmacy_source": "farma_center",
             "site_code": site_code,
             "barcode": barcode,
             "product_name": product_name,
@@ -380,7 +380,7 @@ async def scrape_pharmacy(pharmacy: str, urls_list: list, loader: SupabaseLoader
     handlers = {
         "farma_oliva": scrape_farma_oliva,
         "punto_farma": scrape_punto_farma,
-        "farmacia_center": scrape_farmacia_center,
+        "farma_center": scrape_farmacia_center,
         "farmacia_catedral": scrape_farmacia_catedral,
     }
 
