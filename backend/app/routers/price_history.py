@@ -9,6 +9,7 @@ from app.schemas.product import (
     PriceHistoryPoint,
     PriceHistoryResponse,
 )
+from app.services.data_filters import apply_freshness
 
 router = APIRouter()
 
@@ -20,13 +21,13 @@ def get_price_history(
     pharmacy: str | None = Query(None),
     db: Client = Depends(get_supabase_client),
 ):
-    # Get product IDs for this barcode
-    products_result = (
+    # Get product IDs for this barcode (only fresh listings)
+    products_query = (
         db.table("products")
         .select("id, pharmacy_source, product_name")
         .eq("barcode", barcode)
-        .execute()
     )
+    products_result = apply_freshness(products_query).execute()
 
     if not products_result.data:
         raise HTTPException(status_code=404, detail="Producto no encontrado")

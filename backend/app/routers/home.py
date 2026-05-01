@@ -2,29 +2,20 @@ from fastapi import APIRouter, Depends, Query
 from supabase import Client
 
 from app.dependencies import get_supabase_client
+from app.services.data_filters import apply_freshness, clean_products
 
 router = APIRouter()
 
-# Farma Center stored their logo instead of product images — filter it out
-LOGO_URLS = [
-    "https://f.fcdn.app/assets/commerce/www.farmacenter.com.py/c305_93b5/public/web/img/logo.svg",
-]
+
+PHARMACY_SOURCES = ("farma_oliva", "punto_farma", "farma_center", "farmacia_catedral")
 
 
 @router.get("/home/stats")
 def get_home_stats(db: Client = Depends(get_supabase_client)):
-    total = db.table("products").select("id", count="exact").limit(1).execute()
-    pharmacies = (
-        db.table("products")
-        .select("pharmacy_source")
-        .limit(1000)
-        .execute()
-    )
-    pharmacy_set = set(r["pharmacy_source"] for r in pharmacies.data or [])
-
+    total = db.table("products").select("id", count="planned").limit(1).execute()
     return {
         "total_products": total.count or 0,
-        "pharmacy_count": len(pharmacy_set),
+        "pharmacy_count": len(PHARMACY_SOURCES),
     }
 
 
@@ -33,25 +24,23 @@ def get_top_discounts(
     limit: int = Query(12, ge=1, le=24),
     db: Client = Depends(get_supabase_client),
 ):
-    # Get top discounts per pharmacy (3 each) to ensure mix
     all_products = []
     for pharmacy in ["farma_oliva", "punto_farma", "farma_center", "farmacia_catedral"]:
-        result = (
+        query = (
             db.table("products")
             .select("*")
             .eq("pharmacy_source", pharmacy)
             .not_.is_("discount_percentage", "null")
             .gt("discount_percentage", 5)
-            .lt("discount_percentage", 80)  # filter obviously bad data
+            .lt("discount_percentage", 80)
             .order("discount_percentage", desc=True)
             .limit(limit // 4 + 1)
-            .execute()
         )
+        result = apply_freshness(query).execute()
         all_products.extend(result.data or [])
 
-    # Sort combined results by discount and take top N
     all_products.sort(key=lambda x: x.get("discount_percentage", 0), reverse=True)
-    return all_products[:limit]
+    return clean_products(all_products[:limit])
 
 
 @router.get("/home/bank-deals")
@@ -59,15 +48,15 @@ def get_bank_deals(
     limit: int = Query(8, ge=1, le=24),
     db: Client = Depends(get_supabase_client),
 ):
-    result = (
+    query = (
         db.table("products")
         .select("*")
         .not_.is_("bank_discount_price", "null")
         .order("bank_discount_price", desc=False)
         .limit(limit)
-        .execute()
     )
-    return result.data or []
+    result = apply_freshness(query).execute()
+    return clean_products(result.data or [])
 
 
 @router.get("/home/brands")
@@ -83,6 +72,7 @@ def get_brands(
         query = query.eq("normalized_category", category)
     if pharmacy:
         query = query.eq("pharmacy_source", pharmacy)
+    query = apply_freshness(query)
     result = query.limit(5000).execute()
 
     brand_counts: dict[str, int] = {}
@@ -114,6 +104,7 @@ def get_all_products(
     offset = (page - 1) * limit
 
     query = db.table("products").select("*", count="exact")
+    query = apply_freshness(query)
 
     if pharmacy:
         query = query.eq("pharmacy_source", pharmacy)
@@ -144,7 +135,7 @@ def get_all_products(
     result = query.range(offset, offset + limit - 1).execute()
 
     return {
-        "results": result.data or [],
+        "results": clean_products(result.data or []),
         "total": result.count or 0,
         "page": page,
         "limit": limit,

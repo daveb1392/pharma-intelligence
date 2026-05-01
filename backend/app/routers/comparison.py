@@ -3,6 +3,7 @@ from supabase import Client
 
 from app.dependencies import get_supabase_client
 from app.schemas.product import ComparisonResponse, PharmacyPrice
+from app.services.data_filters import apply_freshness, clean_product
 
 router = APIRouter()
 
@@ -12,19 +13,21 @@ def compare_prices(
     barcode: str,
     db: Client = Depends(get_supabase_client),
 ):
-    result = (
+    query = (
         db.table("products")
         .select("*")
         .eq("barcode", barcode)
         .order("current_price", desc=False)
-        .execute()
     )
+    result = apply_freshness(query).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
+    rows = [clean_product(p) for p in result.data]
+
     pharmacies = []
-    for p in result.data:
+    for p in rows:
         pharmacies.append(
             PharmacyPrice(
                 pharmacy_source=p["pharmacy_source"],
@@ -49,7 +52,7 @@ def compare_prices(
     highest_price = max(prices) if prices else None
     savings = (highest_price - best_price) if best_price and highest_price else None
 
-    first = result.data[0]
+    first = rows[0]
     return ComparisonResponse(
         barcode=barcode,
         product_name=first.get("product_name"),

@@ -2,27 +2,28 @@ from fastapi import APIRouter, Depends, Query
 from supabase import Client
 
 from app.dependencies import get_supabase_client
+from app.services.data_filters import apply_freshness, clean_products
 
 router = APIRouter()
 
 
 @router.get("/ofertas/stats")
 def get_ofertas_stats(db: Client = Depends(get_supabase_client)):
-    discount_count = (
+    discount_query = (
         db.table("products")
         .select("id", count="exact")
         .not_.is_("discount_percentage", "null")
         .gt("discount_percentage", 0)
         .limit(1)
-        .execute()
     )
-    bank_count = (
+    discount_count = apply_freshness(discount_query).execute()
+    bank_query = (
         db.table("products")
         .select("id", count="exact")
         .not_.is_("bank_discount_price", "null")
         .limit(1)
-        .execute()
     )
+    bank_count = apply_freshness(bank_query).execute()
     return {
         "discount_count": discount_count.count or 0,
         "bank_deal_count": bank_count.count or 0,
@@ -43,6 +44,7 @@ def get_ofertas_products(
     offset = (page - 1) * limit
 
     query = db.table("products").select("*", count="exact")
+    query = apply_freshness(query)
 
     if offer_type == "discount":
         query = query.not_.is_("discount_percentage", "null").gt("discount_percentage", 0)
@@ -72,7 +74,7 @@ def get_ofertas_products(
     result = query.range(offset, offset + limit - 1).execute()
 
     return {
-        "results": result.data or [],
+        "results": clean_products(result.data or []),
         "total": result.count or 0,
         "page": page,
         "limit": limit,

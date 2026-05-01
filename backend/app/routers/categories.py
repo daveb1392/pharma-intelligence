@@ -3,6 +3,7 @@ from supabase import Client
 
 from app.dependencies import get_supabase_client
 from app.schemas.product import CategoryItem
+from app.services.data_filters import apply_freshness, clean_products
 
 router = APIRouter()
 
@@ -43,6 +44,7 @@ def get_category_products(
         .select("*", count="exact")
         .eq("normalized_category", category)
     )
+    query = apply_freshness(query)
 
     if pharmacy:
         query = query.eq("pharmacy_source", pharmacy)
@@ -71,7 +73,7 @@ def get_category_products(
     result = query.range(offset, offset + limit - 1).execute()
 
     return {
-        "results": result.data or [],
+        "results": clean_products(result.data or []),
         "total": result.count or 0,
         "page": page,
         "limit": limit,

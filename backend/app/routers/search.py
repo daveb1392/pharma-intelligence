@@ -3,6 +3,7 @@ from supabase import Client
 
 from app.dependencies import get_supabase_client
 from app.schemas.product import SearchResponse, SearchResultItem
+from app.services.data_filters import clean_product
 
 router = APIRouter()
 
@@ -33,7 +34,7 @@ def search_products(
 
     results = []
     for item in data.get("results", []) or []:
-        results.append(SearchResultItem(**item))
+        results.append(SearchResultItem(**clean_product(item)))
 
     return SearchResponse(
         results=results,
