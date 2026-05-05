@@ -5,5 +5,7 @@
     delaycompress
     missingok
     notifempty
-    create 0644 pharma pharma
+    create 0644 root root
+    copytruncate
+    maxsize 500M
 }
