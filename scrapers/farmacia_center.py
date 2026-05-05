@@ -110,6 +110,12 @@ class FarmaciaCenterProduct:
                 elif len(parts) == 1 and not site_code:
                     site_code = parts[0].strip()
 
+            # Fallback: extract from URL pattern ..._<site_code>_<site_code>$
+            if not site_code:
+                url_match = re.search(r"_(\d+)_\d+$", url)
+                if url_match:
+                    site_code = url_match.group(1)
+
             # Brand (priority: JSON > Microdata > data-tit)
             brand = None
             if json_data and "producto" in json_data:
@@ -426,6 +432,15 @@ async def scrape_product(context: PlaywrightCrawlingContext) -> None:
         product_data = FarmaciaCenterProduct.extract_from_html(html, context.request.url)
 
         if product_data:
+            # Refuse to upsert without a parsed site_code: the unique constraint
+            # treats NULL as distinct, so a NULL would create a new corrupted
+            # row each scrape (788 such zombies accumulated historically).
+            if not product_data.get("site_code"):
+                logger.warning(
+                    f"Skipping upsert for {context.request.url}: no site_code parsed"
+                )
+                return
+
             # Update database record (upsert based on pharmacy_source + product_url)
             global db_loader_instance
             if db_loader_instance:
